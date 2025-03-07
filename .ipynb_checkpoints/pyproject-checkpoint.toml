@@ -1,0 +1,21 @@
+[project]
+name = "contextcountbooster"
+version = "0.1.0"
+description = "Models sequence context counts with weights using xgboost"
+readme = "README.md"
+authors = [
+    { name = "carmenoroperv", email = "carmenoroperv@gmail.com" }
+]
+requires-python = ">=3.9"
+dependencies = [
+    "pandas>=2.2.3",
+    "seaborn>=0.13.2",
+    "xgboost>=2.1.4",
+]
+
+[project.scripts]
+contextcountbooster = "contextcountbooster:main"
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"

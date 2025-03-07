@@ -36,5 +36,5 @@ def write_encoded_data(data, outdir, data_type, k, ref, val_frac, encoding):
     
     os.makedirs(outdir, exist_ok=True) 
     outpath = os.path.join(outdir, 
-                           f"{data_type}{pct}_ref{ref}_{k}mers_{encoding}bitOHE.tsv")
+                           f"{data_type}{pct}_{k}mers_{encoding}bitOHE.tsv")
     data.to_csv(outpath, sep='\t', index = False)
