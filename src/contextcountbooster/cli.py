@@ -51,7 +51,7 @@ def get_parser():
     train.add_argument("train_data", help="Input TSV training data (preprocessed with encode command)")
     train.add_argument("val_data", help="Input TSV validation data (preprocessed with encode command)")
     train.add_argument("--encoding", help="Whether to use the 4-bit or 7-bit encoder", default=7, type=int, choices=[4, 7])
-    train.add_argument("--outdir", help="Directory to write the model and training statistics in. Current directory by default", default = "./")
+    train.add_argument("--output_dir", help="Directory to write the model and training statistics in. Current directory by default", default = "./")
     train.add_argument("--max_depth", help="Maximum depth of a tree.", nargs='*', default = [2, 4, 6, 8, 10, 12, 14, 16, 20])
     train.add_argument("--eta", help="Learning rate: step size shrinkage used in update to prevent overfitting; range: [0, 1]", nargs='*', default = [0.1, 0.2, 0.3, 0.4, 0.5])
     train.add_argument("--tree_method", help="The tree construction algorithm used", nargs='*', default = ["auto", "exact"])
@@ -65,7 +65,7 @@ def get_parser():
                                      description="Predict frequencies using trained model.")
     predict.add_argument("test_data", help="Input TSV training data (preprocessed with encode command)")
     predict.add_argument("model", help="Input TSV validation data (preprocessed with encode command)")
-    predict.add_argument("--outdir", help="Directory to write the model and training statistics in. Current directory by default", default = "./")
+    predict.add_argument("--output_dir", help="Directory to write the model and training statistics in. Current directory by default", default = "./")
     
 
     return parser
@@ -96,7 +96,7 @@ def main(args = None):
 
         booster = Booster(opts.train_data,
                           opts.val_data, 
-                          opts.outdir, 
+                          opts.output_dir, 
                           opts.encoding,
                           opts.max_depth, 
                           opts.eta, 
@@ -111,7 +111,7 @@ def main(args = None):
 
         predicter = Predicter(opts.test_data, 
                               opts.model, 
-                              opts.outdir)
+                              opts.output_dir)
         predicter.predict()
     
     else: 
