@@ -149,6 +149,7 @@ class Booster:
         
         return bst
 
+
     def param_configs(self):
         for comb in product(*self.paramspace.values()):
             yield dict(zip(self.paramspace.keys(), comb))
@@ -160,17 +161,21 @@ class Booster:
             ll += xlogy(m[idx], p) + xlogy(u[idx], (1-p)) # p = predicted rate, m = mut count, u = unmut count
         return -ll
     
+
     # TODO: implement nagelkerke_r2
     def nagelkerke_r2(self):
         nk_r2 = 2
         return nk_r2
     
+
     def get_base_encoded_rep(self):
         base_rep = [str(x) for x in range(-(self.k//2), 1) for _ in range(int(self.encoding))]
         base_rep.extend([str(x) for x in range(1, (self.k//2)+1) for _ in range(int(self.encoding))])
 
-        encoded_rep = ["f" + str(x) for x in range(0, (self.k*int(self.encoding)))]
-        base_rep_df = pd.DataFrame({'encoded': encoded_rep, "base_rep": base_rep})
+        f_rep = ["f" + str(x) for x in range(0, (self.k*int(self.encoding)))]
+        f_name = [str(x) + "_b" + str(y) for x in range(-(self.k//2), 1)  for y in range(1, int(self.encoding)+1)]
+        f_name.extend([str(x) + "_b" + str(y) for x in range(1, (self.k//2)+1)  for y in range(1, int(self.encoding)+1)])
+        base_rep_df = pd.DataFrame({'encoded': f_rep, "base_rep": base_rep, "feature_name": f_name})
         base_rep_df = base_rep_df.set_index('encoded')
         return base_rep_df
 
@@ -182,16 +187,21 @@ class Booster:
         data = pd.DataFrame(data=values, index=keys, columns=["score"])
         data['sort'] = data.index.str.extract(r'(\d+)', expand=False).astype(int)
         data = data.sort_values(by = "sort", ascending=True)
-        data = pd.merge(data, base_rep_df, left_index = True, right_index = True, how='left')
+        data = pd.merge(base_rep_df, data, left_index = True, right_index = True, how='left') 
+        data[["score"]] = data[["score"]].fillna(0, inplace = False)
         return data
+
 
     def plot_feature_data(self, data, ylab, filename):
         sns.set_theme(rc={'figure.figsize':(14,4)})
         sns.color_palette("tab10")
-        sns.barplot(data=data, x=data.index, y='score', hue='base_rep')
+        ax = sns.barplot(data=data, x="feature_name", y='score', hue='base_rep')
+        for index, row in data.iterrows():
+            ax.text(row.feature_name, row.score, int(row.score), fontsize = 8, ha='center')
         plt.legend(bbox_to_anchor=(1.02, 1), loc='upper left', borderaxespad=0)
         plt.ylabel(ylab)
         plt.xlabel("Feature")
+        plt.xticks(rotation=90)
         plt.savefig(os.path.join(self.outdir, filename), bbox_inches = 'tight')
         plt.show()
 
