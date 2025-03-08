@@ -49,7 +49,7 @@ CCB trains a boosting model using `xgb` package.
 Model training with hyperparameter tuning can be run as: 
 
 ```
-uv run contextcountbooster train --encoding 4 --outdir ../output/3mers/A2C/4bit/mod/ ../output/3mers/A2C/4bit/train90pct_refA_3mers_4bitOHE.tsv ../output/3mers/A2C/4bit/val10pct_refA_3mers_4bitOHE.tsv
+uv run contextcountbooster train --encoding 4 --output_dir ../output/3mers/A2C/4bit/mod/ ../output/3mers/A2C/4bit/train90pct_refA_3mers_4bitOHE.tsv ../output/3mers/A2C/4bit/val10pct_refA_3mers_4bitOHE.tsv
 ```
 
 Training command outputs the optimal hyperparameter values, training loss and validation loss to `bst_best_param.csv`; trained model to `bst_best.json` (used for loading and making predictions) and `bst_best.raw.txt` (used for model downstream analysis); plots feature gain and weight in `feature_gain.png` and `feature_weight.png`, respectively, and outputs the best result from each tested hyperparameter setting with training and validation loss to `training_res.csv`. 
@@ -61,7 +61,7 @@ Training command outputs the optimal hyperparameter values, training loss and va
 The trained model can be used to make predictions as: 
 
 ```
-uv run contextcountbooster predict --outdir ../output/3mers/A2C/4bit/pred/ ../output/3mers/A2C/4bit/test_refA_3mers_4bitOHE.tsv ../output/3mers/A2C/4bit/mod/bst_best.json
+uv run contextcountbooster predict --output_dir ../output/3mers/A2C/4bit/pred/ ../output/3mers/A2C/4bit/test_refA_3mers_4bitOHE.tsv ../output/3mers/A2C/4bit/mod/bst_best.json
 ```
 
 The predict command outputs the test loss to `test_nll.csv` and test set predictions (along with observed contxt, weight and frequency data) to `test_pred.csv`.
