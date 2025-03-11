@@ -57,7 +57,7 @@ class Booster:
         dval = xgb.DMatrix(x_val, label = y_val, weight = w_val)
 
         # alternative formulation: modeling counts (y_train = data["count"]), setting weight as base margin
-        dtrain = xgb.DMatrix(x_train, y_train, base_margin = [math.log(x) for x in w_train]) 
+        #dtrain = xgb.DMatrix(x_train, y_train, base_margin = [math.log(x) for x in w_train]) 
         #dval = xgb.DMatrix(x_val, y_val, base_margin = [math.log(x) for x in w_val])
 
         # base parameters (not trained for optimal values)
