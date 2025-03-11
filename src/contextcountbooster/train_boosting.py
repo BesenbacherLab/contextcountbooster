@@ -88,7 +88,7 @@ class Booster:
 
             # early stopping callback
             es = xgb.callback.EarlyStopping(
-                rounds=3, # val error needs to decreate at least every x roudns to continue training
+                rounds=3, # val error needs to decrease at least every x rounds to continue training
                 min_delta=1e-10, # minimum change in metric
                 save_best=True,
                 maximize=False,
