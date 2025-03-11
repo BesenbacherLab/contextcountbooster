@@ -57,16 +57,16 @@ class Booster:
         dval = xgb.DMatrix(x_val, label = y_val, weight = w_val)
 
         # alternative formulation: modeling counts (y_train = data["count"]), setting weight as base margin
-        #dtrain = xgb.DMatrix(x_train, y_train, base_margin = [math.log(x) for x in w_train]) 
+        dtrain = xgb.DMatrix(x_train, y_train, base_margin = [math.log(x) for x in w_train]) 
         #dval = xgb.DMatrix(x_val, y_val, base_margin = [math.log(x) for x in w_val])
 
         # base parameters (not trained for optimal values)
         param = {"booster": "gbtree", # "gbtree is the default (non-linear relationship)", alternative: gblinear, which is essentially elastic-net
-                "max_bin": 256, # 256 is the default; only used if tree_method = hist; max. number of discrete bins to bucket continuous features
+                "max_bin": 2, # 256 is the default; only used if tree_method = hist; max. number of discrete bins to bucket continuous features
                 "seed": 0, 
                 "max_delta_step": 0.7, # 0.7 is the default for obj=count:poisson; otherwise default=0; max. delta step we allow each leaf output to be. 
                 "objective": "count:poisson", 
-                "eval_metric": ["poisson-nloglik", "logloss"]}
+                "eval_metric": ["poisson-nloglik"]}
         
         # number of boosting rounds 
         num_round = 5000
@@ -210,11 +210,13 @@ class Booster:
 
         feature_dat = bst.get_score(importance_type='gain') # gain: the average gain across all splits the feature is used in
         data = self.format_feature_data(feature_dat) 
+        print(data.head())
         self.plot_feature_data(data, "Gain", "feature_gain.png")
 
 
     def plot_feature_weight(self, bst):
 
         feature_dat = bst.get_score(importance_type='weight') # weight: number of times a feature is used to split the data across all trees
-        data = self.format_feature_data(feature_dat) 
+        data = self.format_feature_data(feature_dat)
+        print(data.head())
         self.plot_feature_data(data, "Weight", "feature_weight.png")

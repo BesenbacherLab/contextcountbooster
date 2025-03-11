@@ -38,7 +38,6 @@ def get_parser():
     pre_proc.add_argument("--ref_base", help="Unique target middle base of the input contexts. '\
                           The input will be filtered to only include context with REF in the middle. '\
                           If not provided, input should contain a single unique middle base.", default=None)
-    pre_proc.add_argument("--pseudocount", help="Pseudocount to avoid 0 rates", type=float, default=1)
     pre_proc.add_argument("--train_val_split", help="Split the input data to training and validation set, based on val_frac", action = "store_true")
     pre_proc.add_argument("--val_frac", help="Fraction of training data to use as validation", type=float, default=0.1)
     
@@ -86,7 +85,6 @@ def main(args = None):
                                 opts.output_dir,
                                 opts.encoding, 
                                 opts.ref_base, 
-                                opts.pseudocount,
                                 opts.train_val_split,
                                 opts.val_frac,
                                 )
@@ -105,6 +103,7 @@ def main(args = None):
                           )
         model = booster.train_booster()
         booster.plot_feature_gain(model)
+        
         booster.plot_feature_weight(model)
     
     elif opts.command == "predict":
