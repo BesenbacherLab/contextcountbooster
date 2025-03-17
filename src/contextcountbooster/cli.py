@@ -51,19 +51,23 @@ def get_parser():
     train.add_argument("val_data", help="Input TSV validation data (preprocessed with encode command)")
     train.add_argument("--encoding", help="Whether to use the 4-bit or 7-bit encoder", default=7, type=int, choices=[4, 7])
     train.add_argument("--output_dir", help="Directory to write the model and training statistics in. Current directory by default", default = "./")
-    train.add_argument("--max_depth", help="Maximum depth of a tree.", nargs='*', default = [2, 4, 6, 8, 10, 12, 14, 16, 20])
-    train.add_argument("--eta", help="Learning rate: step size shrinkage used in update to prevent overfitting; range: [0, 1]", nargs='*', default = [0.1, 0.2, 0.3, 0.4, 0.5])
+    train.add_argument("--max_depth", help="Maximum depth of a tree.", nargs='*', default = [4, 6, 8, 10, 14, 18, 22])
+    train.add_argument("--eta", help="Learning rate: step size shrinkage used in update to prevent overfitting; range: [0, 1]", nargs='*', default = [0.05, 0.1, 0.2, 0.3])
+    train.add_argument("--subsample", help="Subsample ratio of the training instances per boosting iteration.", nargs='*', default = [0.5])
+    train.add_argument("--colsample_bytree", help="Subsample ratio of features when constructing each tree", nargs='*', default = [0.5])
+    train.add_argument("--colsample_bylevel", help="Subsample ratio of features when constructing each tree level", nargs='*', default = [0.5])
+    train.add_argument("--l2_lambda", help="L2 regularization term on weights. Increasing this value will make model more conservative.", nargs='*', default = [0, 0.5, 1, 2, 5])
     train.add_argument("--tree_method", help="The tree construction algorithm used", nargs='*', default = ["auto", "exact"])
     train.add_argument("--grow_policy", help="Controls a way new nodes are added to the tree '\
                        (depthwise=split at nodes closest to the root; lossguide=split at nodes with highest loss change)", nargs='*', default = ["depthwise", "lossguide"])
     
     
-    
     predict = subparsers.add_parser(name="predict", 
-                                     help="Predict frequencies using trained model.", 
-                                     description="Predict frequencies using trained model.")
-    predict.add_argument("test_data", help="Input TSV training data (preprocessed with encode command)")
-    predict.add_argument("model", help="Input TSV validation data (preprocessed with encode command)")
+                                     help="Predict frequencies using the trained model.", 
+                                     description="Predict frequencies using the trained model.")
+    predict.add_argument("test_data", help="Input TSV test data (preprocessed with encode command)")
+    predict.add_argument("model", help="Trained xgb model")
+    predict.add_argument("null_model", help="Null model: the mean frequency of the training data.")
     predict.add_argument("--output_dir", help="Directory to write the model and training statistics in. Current directory by default", default = "./")
     
 
@@ -98,18 +102,22 @@ def main(args = None):
                           opts.encoding,
                           opts.max_depth, 
                           opts.eta, 
+                          opts.subsample,
+                          opts.colsample_bytree,
+                          opts.colsample_bylevel,
+                          opts.l2_lambda,
                           opts.tree_method, 
                           opts.grow_policy
                           )
         model = booster.train_booster()
         booster.plot_feature_gain(model)
-        
         booster.plot_feature_weight(model)
     
     elif opts.command == "predict":
 
         predicter = Predicter(opts.test_data, 
                               opts.model, 
+                              opts.null_model,
                               opts.output_dir)
         predicter.predict()
     

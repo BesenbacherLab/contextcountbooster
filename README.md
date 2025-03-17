@@ -12,7 +12,7 @@ Context weights should be a TSV file with two columns: sequence context and cont
 
 # Usage
 
-All commands and their descriptions can be found by running: 
+All commands and their descriptions can be founds by running: 
 
 ```
 uv run contextcountbooster --help

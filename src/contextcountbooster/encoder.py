@@ -85,7 +85,7 @@ class OneHotEncoder:
                                self.ref, 
                                self.val_frac, 
                                self.encoding)
-            write_encoded_data(pd.concat([d_val.reset_index(drop=True), df_encoding], axis=1), 
+            write_encoded_data(pd.concat([d_val.reset_index(drop=True), df_encoding.iloc[a0_idx].reset_index(drop=True)], axis=1), 
                                self.output_dir, 
                                "val", 
                                self.k, 

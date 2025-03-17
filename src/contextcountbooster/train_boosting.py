@@ -2,10 +2,11 @@ import os
 import pandas as pd
 import numpy as np
 import seaborn as sns
-import matplotlib.pyplot as plt
 import xgboost as xgb
 from itertools import product
-from scipy.special import xlogy
+from collections import OrderedDict
+from contextcountbooster.utils import log_loss
+from contextcountbooster.utils import nagelkerke_r2
 
 
 class Booster:
@@ -16,6 +17,10 @@ class Booster:
                  encoding,
                  max_depth,
                  eta,
+                 subsample, 
+                 colsample_bytree,
+                 colsample_bylevel,
+                 l2_lambda,
                  tree_method,
                  grow_policy,
                  ):
@@ -27,10 +32,18 @@ class Booster:
         self.k = int((self.train_data.shape[1] - 4)/self.encoding)
         self.max_depth = max_depth
         self.eta = eta
+        self.subsample = subsample
+        self.colsample_bytree = colsample_bytree
+        self.colsample_bylevel = colsample_bylevel
+        self.l2_lambda = l2_lambda
         self.tree_method = tree_method
         self.grow_policy = grow_policy
         self.paramspace = {"max_depth": max_depth, # max depth of a tree
                            "eta": eta, # learning rate
+                           "subsample": subsample,
+                           "colsample_bytree": colsample_bytree,
+                           "colsample_bylevel": colsample_bylevel,
+                           "lambda": l2_lambda,
                            "tree_method": tree_method, # auto is the default (same as hist); hist: faster histogram optimized approximate greedy algorithm; alternatives: exact (enumerates all split candidates); 
                            "grow_policy": grow_policy, # param only supported if tree_method = hist/auto; depthwise is the default (splits at nodes closest to the root); alternative lossguide: split at nodes with highest loss change
                            } 
@@ -51,6 +64,14 @@ class Booster:
         m_val = self.val_data["count"].to_list()
         u_val = [y-x for x,y in zip(m_val, w_val)]
 
+        # null model log_lik
+        mu_freq = np.sum(self.train_data["count"])/np.sum(self.train_data["weight"])
+        n_train = sum(m_train) + sum(u_train)
+        n_val = sum(m_val) + sum(u_val)
+        ll0_train = log_loss([mu_freq]*self.train_data.shape[0], m_train, u_train)
+        ll0_val = log_loss([mu_freq]*self.val_data.shape[0], m_val, u_val)
+
+
         xgb.set_config(verbosity=1) # set verbosity level
 
         dtrain = xgb.DMatrix(x_train, label = y_train, weight = w_train)
@@ -64,32 +85,40 @@ class Booster:
         param = {"booster": "gbtree", # "gbtree is the default (non-linear relationship)", alternative: gblinear, which is essentially elastic-net
                 "max_bin": 2, # 256 is the default; only used if tree_method = hist; max. number of discrete bins to bucket continuous features
                 "seed": 0, 
-                "max_delta_step": 0.7, # 0.7 is the default for obj=count:poisson; otherwise default=0; max. delta step we allow each leaf output to be. 
                 "objective": "count:poisson", 
-                "eval_metric": ["poisson-nloglik"]}
+                "eval_metric": "poisson-nloglik"}
         
         # number of boosting rounds 
-        num_round = 5000
+        num_round = 10000
 
         # specify validations set to watch performance
         watchlist = [(dtrain, "train"), (dval, "eval")]
 
         best_nll = 1e16
         train_res = pd.DataFrame({})
+        
         # Find optimal hyperparams
         for config in self.param_configs():
             
-            if config["tree_method"] == "exact":
+            if config["tree_method"] == "exact": # grow policy not tuned for exact tree method
                 config.pop("grow_policy")
-                # TODO: check if exact config already run, if yes, skip
+                if (train_res.loc[train_res["tree_method"] == "exact", 
+                                  ['colsample_bylevel',
+                                   'colsample_bytree',
+                                   'eta',
+                                   'lambda',
+                                   'max_depth',
+                                   'subsample']].astype('float').values == [float(x) for x in config.values() if x != "exact"]).all(axis=1).any():
+                    continue
+                    
 
-            print(f"Training with config: {config}")
+            print(f"Training iteration: {train_res.shape[0]+1}; Training with config: {config}")
             full_config = param | config # merge base and tuned parameters
 
             # early stopping callback
             es = xgb.callback.EarlyStopping(
-                rounds=3, # val error needs to decrease at least every x rounds to continue training
-                min_delta=1e-10, # minimum change in metric
+                rounds=100, # val error needs to decrease at least every x rounds to continue training
+                min_delta=1e-5, # minimum change in metric
                 save_best=True,
                 maximize=False,
                 data_name="eval",
@@ -111,24 +140,40 @@ class Booster:
 
 
             # calculate log_loss
-            nll_train = self.log_loss(preds_train, m_train, u_train)
-            nll = self.log_loss(preds, m_val, u_val)
+            ll_train = log_loss(preds_train, m_train, u_train)
+            ll = log_loss(preds, m_val, u_val)
+
+            # calculate nagelkerke_r2
+            nk_r2_train = nagelkerke_r2(n_train, ll0_train, ll_train)
+            nk_r2 = nagelkerke_r2(n_val, ll0_val, ll)
+
+
             if config["tree_method"] == "auto":
-                print(f'XGBoost with max_depth={config["max_depth"]} eta={config["eta"]} tree_method={config["tree_method"]} grow_policy={config["grow_policy"]} val_LL={nll}')
+                print(f'XGBoost with max_depth={config["max_depth"]} eta={config["eta"]} tree_method={config["tree_method"]} grow_policy={config["grow_policy"]} val_nLL={-ll} val_nk_r2={nk_r2}')
             else: 
-                print(f'XGBoost with max_depth={config["max_depth"]} eta={config["eta"]} tree_method={config["tree_method"]} val_LL={nll}')
-            
-            # TODO: calculate nagelkerke_r2
+                print(f'XGBoost with max_depth={config["max_depth"]} eta={config["eta"]} tree_method={config["tree_method"]} val_nLL={-ll} val_nk_r2={nk_r2}')
+
 
             # if neg_log_loss is below the current best, save new best
-            if nll < best_nll:
+            if -ll < best_nll:
+                best_nll = -ll
                 bst_best = bst
                 param_best = config
-                param_best["train_nll"] = nll_train
-                param_best["val_nll"] = nll
-                
-            config["train_nll"] = nll_train
-            config["val_nll"] = nll
+                param_best["train_ll"] = ll_train
+                param_best["val_ll"] = ll
+                param_best["train_ll_diff"] = ll_train - ll0_train
+                param_best["val_ll_diff"] = ll - ll0_val
+                param_best["nk_r2_train"] = nk_r2_train
+                param_best["nk_r2"] = nk_r2
+
+            config["train_ll"] = ll_train
+            config["val_ll"] = ll
+            config["train_ll_diff"] = ll_train - ll0_train
+            config["val_ll_diff"] = ll - ll0_val
+            config["nk_r2_train"] = nk_r2_train
+            config["nk_r2"] = nk_r2
+            config["n_train"] = n_train
+            config["n_val"] = n_val
 
             if train_res.shape[0] == 0:
                 train_res = pd.DataFrame([config])
@@ -141,31 +186,24 @@ class Booster:
         # dump model
         bst_best.dump_model(os.path.join(self.outdir, "bst_best.raw.txt"))
 
+        param_best["train_ll0"] = ll0_train
+        param_best["val_ll0"] = ll0_val
+        param_best["n_train"] = n_train
+        param_best["n_val"] = n_val
         # write best model config and loss
         pd.DataFrame.from_dict(data=param_best, orient='index').to_csv(os.path.join(self.outdir, "bst_best_param.csv"), header=False)
         
         # write training results
         train_res.to_csv(os.path.join(self.outdir, "training_res.csv"), header=True, index = False)
+
+        pd.DataFrame.from_dict(data={'mu_freq': [mu_freq]}, orient='columns').to_csv(os.path.join(self.outdir, "mu_freq.csv"), index = False)
         
         return bst
 
 
     def param_configs(self):
         for comb in product(*self.paramspace.values()):
-            yield dict(zip(self.paramspace.keys(), comb))
-
-    
-    def log_loss(self, p_preds, m, u):
-        ll = 0
-        for idx, p in enumerate(p_preds):
-            ll += xlogy(m[idx], p) + xlogy(u[idx], (1-p)) # p = predicted rate, m = mut count, u = unmut count
-        return -ll
-    
-
-    # TODO: implement nagelkerke_r2
-    def nagelkerke_r2(self):
-        nk_r2 = 2
-        return nk_r2
+            yield OrderedDict(sorted(zip(self.paramspace.keys(), comb), key=lambda x: x[0]))
     
 
     def get_base_encoded_rep(self):
@@ -195,22 +233,20 @@ class Booster:
     def plot_feature_data(self, data, ylab, filename):
         sns.set_theme(rc={'figure.figsize':(14,4)})
         sns.color_palette("tab10")
-        ax = sns.barplot(data=data, x="feature_name", y='score', hue='base_rep')
+        plot = sns.barplot(data=data, x="feature_name", y='score', hue='base_rep')
         for index, row in data.iterrows():
-            ax.text(row.feature_name, row.score, int(row.score), fontsize = 8, ha='center')
-        plt.legend(bbox_to_anchor=(1.02, 1), loc='upper left', borderaxespad=0)
-        plt.ylabel(ylab)
-        plt.xlabel("Feature")
-        plt.xticks(rotation=90)
-        plt.savefig(os.path.join(self.outdir, filename), bbox_inches = 'tight')
-        plt.show()
+            plot.text(row.feature_name, row.score, int(row.score), fontsize = 8, ha='center')
+        sns.move_legend(plot, "upper left", bbox_to_anchor=(1, 1), title=None)
+        plot.set(xlabel="Feature", ylabel=ylab)
+        plot.tick_params(axis='x', rotation=90)
+        plot.figure.savefig(os.path.join(self.outdir, filename), bbox_inches = 'tight')
+        plot.figure.clf()
 
 
     def plot_feature_gain(self, bst):
 
         feature_dat = bst.get_score(importance_type='gain') # gain: the average gain across all splits the feature is used in
         data = self.format_feature_data(feature_dat) 
-        print(data.head())
         self.plot_feature_data(data, "Gain", "feature_gain.png")
 
 
@@ -218,5 +254,4 @@ class Booster:
 
         feature_dat = bst.get_score(importance_type='weight') # weight: number of times a feature is used to split the data across all trees
         data = self.format_feature_data(feature_dat)
-        print(data.head())
         self.plot_feature_data(data, "Weight", "feature_weight.png")

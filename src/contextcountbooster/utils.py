@@ -1,5 +1,7 @@
 import os
 import pandas as pd
+import numpy as np
+from scipy.special import xlogy
 
 def read_context_data(data, ref = None, dtype = "count"):
     
@@ -23,6 +25,7 @@ def read_context_data(data, ref = None, dtype = "count"):
 
     return d, k
 
+
 def write_encoded_data(data, outdir, data_type, k, ref, val_frac, encoding):
     if not outdir:
         outdir = "./"
@@ -38,3 +41,18 @@ def write_encoded_data(data, outdir, data_type, k, ref, val_frac, encoding):
     outpath = os.path.join(outdir, 
                            f"{data_type}{pct}_{k}mers_{encoding}bitOHE.tsv")
     data.to_csv(outpath, sep='\t', index = False)
+
+
+def log_loss(p_preds, m, u):
+    ll = 0
+    for idx, p in enumerate(p_preds):
+        ll += xlogy(m[idx], p) + xlogy(u[idx], (1-p)) # p = predicted rate, m = mut count, u = unmut count
+    return ll
+
+
+def nagelkerke_r2(N, ll0, ll):
+    print(f"ll0: {ll0}, ll: {ll}, N: {N}")
+    print(f"np.exp1: {np.exp((2*(ll0-ll))/N)}, np.exp2: {np.exp((2*ll0)/N)}")
+    nk_r2 = (1-np.exp((2*(ll0-ll))/N)) / (1-np.exp((2*ll0)/N))
+    print(f"nk_r2: {nk_r2}")
+    return nk_r2
