@@ -20,10 +20,9 @@ class OneHotEncoder:
                  counts, 
                  weights, 
                  output_dir = None,
+                 output_prefix = "",
                  encoding = 7,
                  ref = None, 
-                 train_val_split = False,
-                 val_frac = 0.1,
                  ):
         
         # read in count data
@@ -32,10 +31,9 @@ class OneHotEncoder:
         assert(k1 == k2)
         self.k = k1
         self.output_dir = output_dir
+        self.output_prefix = output_prefix
         self.encoding = encoding
         self.ref = ref
-        self.train_val_split = train_val_split
-        self.val_frac = val_frac
 
 
     def encode(self):
@@ -51,57 +49,12 @@ class OneHotEncoder:
         encoding = [[x for k in context for x in encoder[k]] for context in d.context.to_list()]
         df_encoding = pd.DataFrame(encoding, columns = ["p" + str(x) + "_b" + str(y) for x in range(1, self.k+1, 1) for y in range(1, self.encoding+1, 1)])
 
-        if self.train_val_split: 
-            prng = np.random.RandomState(0)
-
-            counts = d["count"].to_list() # n_good
-            weights = d["weight"].to_list() # m_total
-            uncounted = [x - y for x, y in zip(weights, counts)] # n_bad
-            n_samples = [int(x*self.val_frac) for x in weights] # n_sample
-
-            # remove observations (kmers) with zero n_samples from the validation set
-            a0_idx = [i for i,x in enumerate(n_samples) if x > 0]
-            counts_a0 = [counts[i] for i in a0_idx]
-            uncounted_a0 = [uncounted[i] for i in a0_idx]
-            n_samples_a0 = [n_samples[i] for i in a0_idx]
-            
-            # sample validation set counts
-            val_count = prng.hypergeometric(ngood = counts_a0, nbad = uncounted_a0, nsample = n_samples_a0)
-            d_val = pd.DataFrame({"context": d.loc[a0_idx, "context"], 
-                                  "count": val_count,
-                                  "weight": n_samples_a0, 
-                                  "freq": [x/y for x,y in zip(val_count,n_samples_a0)]})
-
-            # remove validation counts from training set
-            d.loc[a0_idx,"count"] = d.loc[a0_idx,"count"] - val_count
-            d.loc[a0_idx,"weight"] = d.loc[a0_idx,"weight"] - n_samples_a0
-            d['freq'] = (d["count"])/(d["weight"])
-
-            # write output
-            write_encoded_data(pd.concat([d.reset_index(drop=True), df_encoding], axis=1), 
-                               self.output_dir, 
-                               "train", 
-                               self.k, 
-                               self.ref, 
-                               self.val_frac, 
-                               self.encoding)
-            write_encoded_data(pd.concat([d_val.reset_index(drop=True), df_encoding.iloc[a0_idx].reset_index(drop=True)], axis=1), 
-                               self.output_dir, 
-                               "val", 
-                               self.k, 
-                               self.ref, 
-                               self.val_frac, 
-                               self.encoding)
-
-        else: 
-            d['freq'] = (d["count"])/(d["weight"])
-            write_encoded_data(pd.concat([d.reset_index(drop=True), df_encoding], axis=1), 
-                               self.output_dir, 
-                               "test", 
-                               self.k, 
-                               self.ref, 
-                               self.val_frac, 
-                               self.encoding)
+        d['freq'] = (d["count"])/(d["weight"])
+        write_encoded_data(pd.concat([d.reset_index(drop=True), df_encoding], axis=1), 
+                            self.output_dir, 
+                            self.output_prefix,
+                            self.k, 
+                            self.encoding)
 
         
     def combine_data(self): 

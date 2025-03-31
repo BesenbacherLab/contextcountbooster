@@ -32,14 +32,12 @@ def get_parser():
                                      description="Preprocess the input data: contexts are one hot encoded and pseudocounts added to counts and weights")
     pre_proc.add_argument("input_counts", help="Input TSV file with count data, containing sequence context and the respective count")
     pre_proc.add_argument("input_weights", help="Input TSV file with weight data, containing sequence context and the respective weight")
-
+    pre_proc.add_argument("--output_prefix", help="Output file start prefix", default="")
     pre_proc.add_argument("--output_dir", help="Directory where to write the output files, if not provided, output will be written to the current directory.", default=None)
     pre_proc.add_argument("--encoding", help="Whether to use the 4-bit or 7-bit encoder", default=7, type=int, choices=[4, 7])
     pre_proc.add_argument("--ref_base", help="Unique target middle base of the input contexts. '\
                           The input will be filtered to only include context with REF in the middle. '\
                           If not provided, input should contain a single unique middle base.", default=None)
-    pre_proc.add_argument("--train_val_split", help="Split the input data to training and validation set, based on val_frac", action = "store_true")
-    pre_proc.add_argument("--val_frac", help="Fraction of training data to use as validation", type=float, default=0.1)
     
     
 
@@ -47,19 +45,23 @@ def get_parser():
                                      help="Train boosting model based on input context counts and weights", 
                                      description="Train boosting model based on input context counts and weights")
     
-    train.add_argument("train_data", help="Input TSV training data (preprocessed with encode command)")
-    train.add_argument("val_data", help="Input TSV validation data (preprocessed with encode command)")
+    train.add_argument("--train_data", help="Input TSV training data (preprocessed with encode command)")
+    train.add_argument("--dist_CV", help="Whether CV is being run in a distributed way from the pipeline", action='store_true')
+    train.add_argument("--aggregate_and_train_only", help="CV done in a distributed manner, aggregate results and train model on full training set", action='store_true')
     train.add_argument("--encoding", help="Whether to use the 4-bit or 7-bit encoder", default=7, type=int, choices=[4, 7])
+    train.add_argument("--CV_res", help="Save cross-validation results range (min, q25, median, q75, max)", action='store_true')
+    train.add_argument("--n_CV_it", help="Number of CV iterations", default=1, type=int)
     train.add_argument("--output_dir", help="Directory to write the model and training statistics in. Current directory by default", default = "./")
+    train.add_argument("--n_CV_folds", help="Number of cross-validation folds", default = 5, type=int)
     train.add_argument("--max_depth", help="Maximum depth of a tree.", nargs='*', default = [4, 6, 8, 10, 14, 18, 22])
-    train.add_argument("--eta", help="Learning rate: step size shrinkage used in update to prevent overfitting; range: [0, 1]", nargs='*', default = [0.05, 0.1, 0.2, 0.3])
+    train.add_argument("--eta", help="Learning rate: step size shrinkage used in update to prevent overfitting; range: [0, 1]", nargs='*', default = [0.1]) # [0.05, 0.1, 0.2, 0.3, 0.4, 0.5]
     train.add_argument("--subsample", help="Subsample ratio of the training instances per boosting iteration.", nargs='*', default = [0.5])
     train.add_argument("--colsample_bytree", help="Subsample ratio of features when constructing each tree", nargs='*', default = [0.5])
     train.add_argument("--colsample_bylevel", help="Subsample ratio of features when constructing each tree level", nargs='*', default = [0.5])
-    train.add_argument("--l2_lambda", help="L2 regularization term on weights. Increasing this value will make model more conservative.", nargs='*', default = [0, 0.5, 1, 2, 5])
-    train.add_argument("--tree_method", help="The tree construction algorithm used", nargs='*', default = ["auto", "exact"])
+    train.add_argument("--l2_lambda", help="L2 regularization term on weights. Increasing this value will make model more conservative.", nargs='*', default = [1]) # [1, 2, 5, 10, 20, 30]
+    train.add_argument("--tree_method", help="The tree construction algorithm used", nargs='*', default = ["auto"])
     train.add_argument("--grow_policy", help="Controls a way new nodes are added to the tree '\
-                       (depthwise=split at nodes closest to the root; lossguide=split at nodes with highest loss change)", nargs='*', default = ["depthwise", "lossguide"])
+                       (depthwise=split at nodes closest to the root; lossguide=split at nodes with highest loss change)", nargs='*', default = ["lossguide"])
     
     
     predict = subparsers.add_parser(name="predict", 
@@ -87,19 +89,22 @@ def main(args = None):
         encoder = OneHotEncoder(opts.input_counts, 
                                 opts.input_weights, 
                                 opts.output_dir,
+                                opts.output_prefix,
                                 opts.encoding, 
                                 opts.ref_base, 
-                                opts.train_val_split,
-                                opts.val_frac,
                                 )
         encoder.encode()
 
     elif opts.command == "train":
 
         booster = Booster(opts.train_data,
-                          opts.val_data, 
-                          opts.output_dir, 
+                          opts.output_dir,
+                          opts.dist_CV,
+                          opts.aggregate_and_train_only,
                           opts.encoding,
+                          opts.CV_res,
+                          opts.n_CV_it,
+                          opts.n_CV_folds,
                           opts.max_depth, 
                           opts.eta, 
                           opts.subsample,
@@ -110,8 +115,9 @@ def main(args = None):
                           opts.grow_policy
                           )
         model = booster.train_booster()
-        booster.plot_feature_gain(model)
-        booster.plot_feature_weight(model)
+        if not opts.dist_CV:
+            booster.plot_feature_gain(model)
+            booster.plot_feature_weight(model)
     
     elif opts.command == "predict":
 

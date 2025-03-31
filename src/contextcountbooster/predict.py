@@ -18,7 +18,6 @@ class Predicter:
         self.bst.load_model(model)  # load model data (json)
         self.mod0 = pd.read_csv(null_model)
         self.mod0 = self.mod0["mu_freq"].item()
-        print(self.mod0)
         self.outdir = outdir
 
     def predict(self):
@@ -34,13 +33,14 @@ class Predicter:
         ll_test = log_loss(preds, m_test, u_test)
 
         # calculate nagelkerke r2
-        n_test = sum(m_test) + sum(u_test)
+        n_test = sum(w_test)
         ll0_test = log_loss([self.mod0]*self.test_data.shape[0], m_test, u_test)
         nk_r2 = nagelkerke_r2(n_test, ll0_test, ll_test)
 
         print(f"Test data ll: {ll_test}")
         print(f"Test data nk_r2: {nk_r2}")
         print(f"N: {n_test}")
+
         res_test = {"ll": ll_test, "ll0": ll0_test, "ll_diff": ll_test - ll0_test, "nagelkerke_r2": nk_r2, "N": n_test}
         os.makedirs(self.outdir, exist_ok=True) 
         pd.DataFrame.from_dict(data=res_test, orient='index').to_csv(os.path.join(self.outdir, "test_nll.csv"), header=False)

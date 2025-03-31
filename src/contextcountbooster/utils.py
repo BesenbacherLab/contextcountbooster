@@ -26,20 +26,13 @@ def read_context_data(data, ref = None, dtype = "count"):
     return d, k
 
 
-def write_encoded_data(data, outdir, data_type, k, ref, val_frac, encoding):
+def write_encoded_data(data, outdir, output_prefix, k, encoding):
     if not outdir:
         outdir = "./"
-
-    if data_type == "train":
-        pct = f"{(int((1-val_frac)*100))}pct"
-    elif data_type == "val":
-        pct = f"{(int(val_frac*100))}pct"
-    else: 
-        pct = ""
     
     os.makedirs(outdir, exist_ok=True) 
     outpath = os.path.join(outdir, 
-                           f"{data_type}{pct}_{k}mers_{encoding}bitOHE.tsv")
+                           f"{output_prefix}{k}mers_{encoding}bitOHE.tsv")
     data.to_csv(outpath, sep='\t', index = False)
 
 
@@ -51,8 +44,5 @@ def log_loss(p_preds, m, u):
 
 
 def nagelkerke_r2(N, ll0, ll):
-    print(f"ll0: {ll0}, ll: {ll}, N: {N}")
-    print(f"np.exp1: {np.exp((2*(ll0-ll))/N)}, np.exp2: {np.exp((2*ll0)/N)}")
     nk_r2 = (1-np.exp((2*(ll0-ll))/N)) / (1-np.exp((2*ll0)/N))
-    print(f"nk_r2: {nk_r2}")
     return nk_r2
