@@ -6,7 +6,6 @@ dist/
 wheels/
 *.egg-info
 .ipynb_checkpoints
-.pre_commit-config.yaml
 
 # Virtual environments
 .venv
