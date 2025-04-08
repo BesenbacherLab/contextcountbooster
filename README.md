@@ -1,3 +1,7 @@
+![example workflow](https://github.com/carmenoroperv/contextcountbooster/actions/workflows/main.yml/badge.svg)
+
+
+
 # ContextCountBooster
 Sequence context count modeling with weights using xgboost
 
