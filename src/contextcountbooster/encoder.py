@@ -17,6 +17,13 @@ encoding_4bit = {
     "T": "0001",
 }
 
+encoding_3bit = {
+    "A": "111",  # encodes iupac: MRW; where M = AC; R = AG; W = AT
+    "C": "100",
+    "G": "010",
+    "T": "001",
+}
+
 
 class OneHotEncoder:
     def __init__(
@@ -45,8 +52,10 @@ class OneHotEncoder:
         # one hot encode
         if self.encoding == 7:
             encoder = encoding_7bit
-        else:
+        elif self.encoding == 4:
             encoder = encoding_4bit
+        else:
+            encoder = encoding_3bit
         encoding = [
             [x for k in context for x in encoder[k]] for context in d.context.to_list()
         ]

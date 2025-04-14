@@ -52,7 +52,7 @@ class Booster:
         if alpha == "CV":
             self.alpha = 0
         else:
-            self.alpha = alpha
+            self.alpha = float(alpha)
 
         if max_depth == "k_based":
             self.s_md = int(self.k) - 1

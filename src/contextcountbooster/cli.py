@@ -52,9 +52,9 @@ def get_parser():
     pre_proc.add_argument(
         "--encoding",
         help="Whether to use the 4-bit or 7-bit encoder",
-        default=7,
+        default=4,
         type=int,
-        choices=[4, 7],
+        choices=[3, 4, 7],
     )
     pre_proc.add_argument(
         "--ref_base",
@@ -89,7 +89,7 @@ def get_parser():
         help="Whether to use the 4-bit or 7-bit encoder",
         default=7,
         type=int,
-        choices=[4, 7],
+        choices=[3, 4, 7],
     )
     train.add_argument(
         "--CV_res",
