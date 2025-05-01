@@ -9,6 +9,11 @@ from collections import OrderedDict
 from contextcountbooster.utils import log_loss
 from contextcountbooster.utils import nagelkerke_r2
 
+from xgboostlss.model import XGBoostLSS
+from xgboostlss.distributions import Poisson, ZIPoisson
+from xgboostlss.distributions.Poisson import *  # noqa: F403
+from xgboostlss.distributions.ZIPoisson import *  # noqa: F403
+
 
 class Booster:
     def __init__(
@@ -16,9 +21,9 @@ class Booster:
         train_data,
         outdir,
         dist_CV,
-        aggregate_and_train_only,
+        aggregate_CV_and_train,
         encoding,
-        CV_res,
+        CV_res_range,
         n_CV_it,
         n_CV_folds,
         max_depth,
@@ -30,13 +35,14 @@ class Booster:
         tree_method,
         grow_policy,
         alpha,
+        distribution,
     ):
         self.train_file_name = train_data
         self.train_data = pd.read_csv(self.train_file_name, sep="\t")
         self.outdir = outdir
         self.dist_CV = dist_CV
-        self.aggregate_and_train_only = aggregate_and_train_only
-        self.CV_res = CV_res
+        self.aggregate_CV_and_train = aggregate_CV_and_train
+        self.CV_res_range = CV_res_range
         self.n_CV_it = n_CV_it
         self.encoding = encoding
         self.k = int((self.train_data.shape[1] - 4) / self.encoding)
@@ -49,6 +55,8 @@ class Booster:
         self.l2_lambda = l2_lambda
         self.tree_method = tree_method
         self.grow_policy = grow_policy
+        self.distribution = distribution
+
         if alpha == "CV":
             self.alpha = 0
         else:
@@ -72,11 +80,8 @@ class Booster:
         }
         self.fixed_param = {
             "booster": "gbtree",  # "gbtree is the default (non-linear relationship)", alternative: gblinear, which is essentially elastic-net
-            "max_bin": 2,  # 256 is the default; only used if tree_method = hist; max. number of discrete bins to bucket continuous features
             "seed": 0,
             "max_delta_step": 0.7,
-            "objective": "count:poisson",
-            "eval_metric": "poisson-nloglik",
         }
 
     def train_booster(self):
@@ -88,12 +93,22 @@ class Booster:
             x_train, m_train, w_train, self.alpha, add_pc=True
         )
 
+        # choose xgboostLSS model
+        if self.distribution == "Poisson":
+            xgblss = XGBoostLSS(
+                Poisson(stabilization="None", response_fn="softplus", loss_fn="nll")
+            )
+        elif self.distribution == "ZIPoisson":
+            xgblss = XGBoostLSS(
+                ZIPoisson(stabilization="None", response_fn="softplus", loss_fn="nll")
+            )
+
         # base parameters (not trained for optimal values)
         if self.dist_CV:
-            CV_dist_res = self.cross_validation(m_train, u_train, x_train)
+            CV_dist_res = self.cross_validation(xgblss, m_train, u_train, x_train)
             return CV_dist_res
         else:
-            if self.aggregate_and_train_only:  # CV run in a distributed manner from workflow, combine CV results and choose optimal params
+            if self.aggregate_CV_and_train:  # CV run in a distributed manner from workflow, combine CV results and choose optimal params
                 # read in dist CV results
                 CV_folder = (
                     "/" + "/".join(self.outdir.strip("/").split("/")[:-1]) + "/CV/"
@@ -131,7 +146,9 @@ class Booster:
                 )
 
             else:
-                opt_param, train_res = self.cross_validation(m_train, u_train, x_train)
+                opt_param, train_res = self.cross_validation(
+                    xgblss, m_train, u_train, x_train
+                )
 
             # remove optimal parameters CV performance measures
             mean_val_ll = opt_param.pop("mean_val_ll")
@@ -143,7 +160,7 @@ class Booster:
             full_config = self.fixed_param | opt_param
 
             start_time = time.time()  # training time start
-            bst = xgb.train(full_config, dtrain, num_boost_round=max_best_it)
+            xgblss.train(full_config, dtrain, num_boost_round=max_best_it)
             end_time = time.time()  # training time end
 
             # null model log_lik
@@ -153,7 +170,14 @@ class Booster:
             )
 
             # run prediction
-            preds_train = bst.predict(dtrain)
+            if self.distribution == "Poisson":
+                preds_train = xgblss.predict(dtrain, pred_type="parameters")[
+                    "rate"
+                ].to_list()
+            elif self.distribution == "ZIPoisson":
+                r_val = xgblss.predict(dtrain, pred_type="parameters")["rate"].to_list()
+                p_val = xgblss.predict(dtrain, pred_type="parameters")["gate"].to_list()
+                preds_train = [(1 - p) * r for r, p in zip(r_val, p_val)]
 
             # calculate log_loss
             ll_train = log_loss(preds_train, m_train, u_train)
@@ -163,9 +187,7 @@ class Booster:
 
             # save model
             os.makedirs(self.outdir, exist_ok=True)
-            bst.save_model(os.path.join(self.outdir, "bst_best.json"))
-            # dump model
-            bst.dump_model(os.path.join(self.outdir, "bst_best.raw.txt"))
+            xgblss.save_model(os.path.join(self.outdir, "bst_best.pkl"))
 
             opt_param["mean_val_ll"] = mean_val_ll
             opt_param["mean_val_nk_r2"] = mean_val_nk_r2
@@ -190,7 +212,7 @@ class Booster:
                 data={"mu_freq": [f_mu_train]}, orient="columns"
             ).to_csv(os.path.join(self.outdir, "mu_freq.csv"), index=False)
 
-            return bst
+            return xgblss.booster
 
     def nonzero_weights_data(self, x, m, w):
         # get index of non-zero weights
@@ -267,7 +289,7 @@ class Booster:
                 sorted(zip(self.paramspace.keys(), comb), key=lambda x: x[0])
             )
 
-    def cross_validation(self, m_train, u_train, x_train):
+    def cross_validation(self, xgblss, m_train, u_train, x_train):
         xgb.set_config(verbosity=1)  # verbosity level
         num_round = 10000  # number of boosting rounds
         best_mean_nll = 1e60  # start value for nll
@@ -350,24 +372,37 @@ class Booster:
                         save_best=True,
                         maximize=False,
                         data_name="eval",
-                        metric_name="poisson-nloglik",  # logloss
+                        metric_name="nll",
                     )
 
                     # training
                     evals_result = {}
-                    bst = xgb.train(
-                        full_config,
-                        dtrain,
+                    xgblss.train(
+                        params=full_config,
+                        dtrain=dtrain,
                         num_boost_round=num_round,
                         evals=watchlist,
                         callbacks=[es],
                         evals_result=evals_result,  # save evaluations to dict
                         verbose_eval=100,
                     )
-                    best_it.append(bst.best_iteration)
+                    best_it.append(xgblss.booster.best_iteration)
 
                     # calculate log_loss
-                    ll = log_loss(bst.predict(dval), m_val_f, u_val_f)
+                    if self.distribution == "Poisson":
+                        pred_val = xgblss.predict(dval, pred_type="parameters")[
+                            "rate"
+                        ].to_list()
+                    elif self.distribution == "ZIPoisson":
+                        r_val = xgblss.predict(dval, pred_type="parameters")[
+                            "rate"
+                        ].to_list()
+                        p_val = xgblss.predict(dval, pred_type="parameters")[
+                            "gate"
+                        ].to_list()
+                        pred_val = [(1 - p) * r for r, p in zip(r_val, p_val)]
+
+                    ll = log_loss(pred_val, m_val_f, u_val_f)
                     ll_CV.append(ll)
 
                     # calculate nagelkerke_r2
@@ -385,7 +420,7 @@ class Booster:
                 mean_best_it = round((sum(best_it) / len(best_it)))
                 max_best_it = max(best_it)
 
-                if self.CV_res:
+                if self.CV_res_range:
                     nk_r2_CV_no_inf = []
                     for x in nk_r2_CV:
                         if x == float("-inf"):

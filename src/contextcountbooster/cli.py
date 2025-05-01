@@ -51,7 +51,7 @@ def get_parser():
     )
     pre_proc.add_argument(
         "--encoding",
-        help="Whether to use the 4-bit or 7-bit encoder",
+        help="Whether to use the 3-bit, 4-bit or 7-bit encoder",
         default=4,
         type=int,
         choices=[3, 4, 7],
@@ -76,23 +76,25 @@ def get_parser():
     )
     train.add_argument(
         "--dist_CV",
-        help="Whether CV is being run in a distributed way from the pipeline",
+        help="Hyperparameter tuning is distributred from the pipeline as independent jobs. '\
+                Fixed hyperparameter values are input and the CV result will be saved. '\
+                Following this, CV results can be combined, optimal parameters chosen and full model trained with --aggregate_CV_and_train flag.",
         action="store_true",
     )
     train.add_argument(
-        "--aggregate_and_train_only",
-        help="CV done in a distributed manner, aggregate results and train model on full training set",
+        "--aggregate_CV_and_train",
+        help="Combines CV results that have been run as independent jobs with --dist_CV flag, chooses optimal parameters and trains the full model.",
         action="store_true",
     )
     train.add_argument(
         "--encoding",
-        help="Whether to use the 4-bit or 7-bit encoder",
-        default=7,
+        help="Whether to use the 3-bit, 4-bit or 7-bit encoder",
+        default=4,
         type=int,
         choices=[3, 4, 7],
     )
     train.add_argument(
-        "--CV_res",
+        "--CV_res_range",
         help="Save cross-validation results range (min, q25, median, q75, max)",
         action="store_true",
     )
@@ -106,7 +108,10 @@ def get_parser():
         "--n_CV_folds", help="Number of cross-validation folds", default=5, type=int
     )
     train.add_argument(
-        "--max_depth", help="Maximum depth of a tree.", nargs="*", default="k_based"
+        "--max_depth",
+        help="Maximum depth of a tree. k-based indicates that the maximum tree depth will be k+12",
+        nargs="*",
+        default="k_based",
     )  # [4, 6, 8, 10, 14, 18, 22]
     train.add_argument(
         "--eta",
@@ -157,6 +162,13 @@ def get_parser():
         default=0.01,
     )
 
+    train.add_argument(
+        "--distribution",
+        help="Distribution to use for xgboostLSS.",
+        default="Poisson",
+        choices=["Poisson", "ZIPoisson"],
+    )
+
     predict = subparsers.add_parser(
         name="predict",
         help="Predict frequencies using the trained model.",
@@ -173,6 +185,12 @@ def get_parser():
         "--output_dir",
         help="Directory to write the model and training statistics in. Current directory by default",
         default="./",
+    )
+    predict.add_argument(
+        "--distribution",
+        help="Distribution to use for xgboostLSS.",
+        default="Poisson",
+        choices=["Poisson", "ZIPoisson"],
     )
 
     return parser
@@ -203,9 +221,9 @@ def main(args=None):
             opts.train_data,
             opts.output_dir,
             opts.dist_CV,
-            opts.aggregate_and_train_only,
+            opts.aggregate_CV_and_train,
             opts.encoding,
-            opts.CV_res,
+            opts.CV_res_range,
             opts.n_CV_it,
             opts.n_CV_folds,
             opts.max_depth,
@@ -217,6 +235,7 @@ def main(args=None):
             opts.tree_method,
             opts.grow_policy,
             opts.alpha,
+            opts.distribution,
         )
         model = booster.train_booster()
         if not opts.dist_CV:
@@ -225,7 +244,11 @@ def main(args=None):
 
     elif opts.command == "predict":
         predicter = Predicter(
-            opts.test_data, opts.model, opts.null_model, opts.output_dir
+            opts.test_data,
+            opts.model,
+            opts.null_model,
+            opts.output_dir,
+            opts.distribution,
         )
         predicter.predict()
 

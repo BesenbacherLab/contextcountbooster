@@ -5,15 +5,30 @@ import xgboost as xgb
 from contextcountbooster.utils import log_loss
 from contextcountbooster.utils import nagelkerke_r2
 
+from xgboostlss.model import XGBoostLSS
+from xgboostlss.distributions import Poisson, ZIPoisson
+from xgboostlss.distributions.Poisson import *  # noqa: F403
+from xgboostlss.distributions.ZIPoisson import *  # noqa: F403
+
 
 class Predicter:
-    def __init__(self, test_data, model, null_model, outdir):
+    def __init__(self, test_data, model, null_model, outdir, distribution):
         self.test_data = pd.read_csv(test_data, sep="\t")
-        self.bst = xgb.Booster({"nthread": 4})  # init model
-        self.bst.load_model(model)  # load model data (json)
         self.mod0 = pd.read_csv(null_model)
         self.mod0 = self.mod0["mu_freq"].item()
         self.outdir = outdir
+        self.distribution = distribution
+
+        # # init xgboostLSS model
+        if self.distribution == "Poisson":
+            self.xgblss = XGBoostLSS(
+                Poisson(stabilization="None", response_fn="softplus", loss_fn="nll")
+            )
+        elif self.distribution == "ZIPoisson":
+            self.xgblss = XGBoostLSS(
+                ZIPoisson(stabilization="None", response_fn="softplus", loss_fn="nll")
+            )
+        self.xgblss.load_model(model)  # load model data (pkl)
 
     def predict(self):
         x_test = np.array(self.test_data.iloc[:, 4:])  # encoded features
@@ -22,9 +37,13 @@ class Predicter:
         u_test = [y - x for x, y in zip(m_test, w_test)]
 
         dtest = xgb.DMatrix(x_test, weight=w_test)
-        preds = self.bst.predict(
-            dtest
-        )  # , iteration_range=(0, self.bst.best_iteration + 1) -> not needed, uses best iteration automatically?
+
+        if self.distribution == "Poisson":
+            preds = self.xgblss.predict(dtest, pred_type="parameters")["rate"].to_list()
+        elif self.distribution == "ZIPoisson":
+            r_val = self.xgblss.predict(dtest, pred_type="parameters")["rate"].to_list()
+            p_val = self.xgblss.predict(dtest, pred_type="parameters")["gate"].to_list()
+            preds = [(1 - p) * r for r, p in zip(r_val, p_val)]
 
         ll_test = log_loss(preds, m_test, u_test)
 
