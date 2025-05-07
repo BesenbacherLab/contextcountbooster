@@ -42,6 +42,12 @@ def write_encoded_data(data, outdir, output_prefix, k, encoding):
 
 
 def log_loss(p_preds, m, u):
+    """
+    Calculates log likelihood
+        p_preds: rate predictions
+        m: mutated counts
+        u: unmutated counts
+    """
     ll = 0
     for idx, p in enumerate(p_preds):
         ll += xlogy(m[idx], p) + xlogy(
@@ -51,5 +57,11 @@ def log_loss(p_preds, m, u):
 
 
 def nagelkerke_r2(N, ll0, ll):
+    """
+    Calculates nagelkerke_r2
+        N: number of data points (sum of weights -> sum(u + m))
+        ll0: null model log likelihood
+        ll: model log likelihood
+    """
     nk_r2 = (1 - np.exp((2 * (ll0 - ll)) / N)) / (1 - np.exp((2 * ll0) / N))
     return nk_r2

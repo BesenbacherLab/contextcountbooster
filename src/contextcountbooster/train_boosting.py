@@ -49,10 +49,7 @@ class Booster:
         self.l2_lambda = l2_lambda
         self.tree_method = tree_method
         self.grow_policy = grow_policy
-        if alpha == "CV":
-            self.alpha = 0
-        else:
-            self.alpha = float(alpha)
+        self.alpha = alpha
 
         if max_depth == "k_based":
             self.s_md = int(self.k) - 1
@@ -61,6 +58,7 @@ class Booster:
             self.max_depth = max_depth
 
         self.paramspace = {
+            "alpha": alpha,
             "max_depth": self.max_depth,  # max depth of a tree
             "eta": eta,  # learning rate
             "subsample": subsample,
@@ -80,17 +78,15 @@ class Booster:
         }
 
     def train_booster(self):
-        # prepare training data
+        # training features
         x_train = np.array(self.train_data.iloc[:, 4:])  # encoded features
-        w_train = self.train_data["weight"].to_list()
-        m_train = self.train_data["count"].to_list()
-        m_train, u_train, w_train, f_mu_train, dtrain = self.prep_modeling_data(
-            x_train, m_train, w_train, self.alpha, add_pc=True
-        )
+        m_train = self.train_data["count"].to_list()  # kmer weights w = m + u
+        w_train = self.train_data["weight"].to_list()  # kmer counts (m)
+        u_train = [b - a for a, b in zip(m_train, w_train)]
 
         # base parameters (not trained for optimal values)
         if self.dist_CV:
-            CV_dist_res = self.cross_validation(m_train, u_train, x_train)
+            CV_dist_res = self.cross_validation(x_train, m_train, u_train)
             return CV_dist_res
         else:
             if self.aggregate_and_train_only:  # CV run in a distributed manner from workflow, combine CV results and choose optimal params
@@ -122,16 +118,14 @@ class Booster:
                 opt_param = param_best.to_dict("records")[0]
                 print(opt_param)
 
-                alpha_CV = opt_param.pop("alpha")
-                x_train = np.array(self.train_data.iloc[:, 4:])  # encoded features
-                w_train = self.train_data["weight"].to_list()
-                m_train = self.train_data["count"].to_list()
-                m_train, u_train, w_train, f_mu_train, dtrain = self.prep_modeling_data(
-                    x_train, m_train, w_train, alpha_CV, add_pc=True
-                )
-
             else:
-                opt_param, train_res = self.cross_validation(m_train, u_train, x_train)
+                opt_param, train_res = self.cross_validation(x_train, m_train, u_train)
+
+            # prepare training data target and weights
+            alpha = float(opt_param.pop("alpha"))
+            m_train, u_train, w_train, f_mu_train, dtrain = self.prep_modeling_data(
+                x_train, m_train, w_train, alpha, add_pc=True
+            )
 
             # remove optimal parameters CV performance measures
             mean_val_ll = opt_param.pop("mean_val_ll")
@@ -167,6 +161,7 @@ class Booster:
             # dump model
             bst.dump_model(os.path.join(self.outdir, "bst_best.raw.txt"))
 
+            opt_param["alpha"] = alpha
             opt_param["mean_val_ll"] = mean_val_ll
             opt_param["mean_val_nk_r2"] = mean_val_nk_r2
             opt_param["max_best_it"] = max_best_it
@@ -193,34 +188,74 @@ class Booster:
             return bst
 
     def nonzero_weights_data(self, x, m, w):
-        # get index of non-zero weights
-        a0_idx = [i for i, x in enumerate(w) if x > 0]
-        x_nz = x[a0_idx, :]
-        m_nz = [m[i] for i in a0_idx]
-        w_nz = [w[i] for i in a0_idx]
+        """
+        Check and notify of observations with weight equal to zero. Then filter data to remove all observations where weight (w) is equal to zero
+            x: features (one-hot encoded k-mers)
+            m: mutated counts
+            w: weights (mutated + unmutated counts)
+        """
+        a0_idx = [
+            i for i, x in enumerate(w) if x > 0
+        ]  # get indices of non-zero weights
 
-        return x_nz, m_nz, w_nz
+        if len(a0_idx) != len(w):
+            print(
+                f"\n--->PROBLEM: There are observations with zero weights ({len(m) - len(a0_idx)} out of {len(m)} total observations)\n"
+            )
+            x_nz = x[a0_idx, :]  # choose features with non-zero weights
+            m_nz = [m[i] for i in a0_idx]  # choose counts with non-zero weights
+            w_nz = [w[i] for i in a0_idx]  # choose weights with non-zero weights
+            return x_nz, m_nz, w_nz
+        else:
+            return x, m, w
 
     def prep_modeling_data(self, x, m, w, alpha, add_pc=False):
+        """
+        1) Checks for observations where weight is zero or mutated count is larger than the weight.
+        2) Calculates mean rate, unmutated counts.
+        3) Adds pseudocounts to mutated counts, unmutated counts and weights
+            x: features (one-hot encoded k-mers)
+            m: mutated counts
+            w: weights (mutated + unmutated counts)
+            data_type: test/train
+            add_pc: pseudocount addition flag
+        Returns: mutated, unmutated counts, weights, mean rate, xgb.Dmatrix
+        """
+        # check for (and remove) observations with zero weights
         x, m, w = self.nonzero_weights_data(x, m, w)
-        u = [b - a for a, b in zip(m, w)]
-        f_mu_train = np.sum(m) / np.sum(w)
 
+        # check for observations where the mutated count is larger than the weight, if there are any, exit
+        a = [i for i, (a, b) in enumerate(zip(m, w)) if a > b]
+        if len(a) > 0:
+            print(f"\n---> PROBLEM: m > w, at indices: {a}\n")
+
+        # calculate unmutated counts based on weights and mutated counts as: weight - mutation cound
+        u = [b - a for a, b in zip(m, w)]
+
+        # mean rate
+        mu_rate = np.sum(m) / np.sum(w)
+
+        # add pseducounts based on alpha
         if add_pc:
-            m_p = [((a + b) * alpha * f_mu_train + a) for a, b in zip(m, u)]
-            u_p = [((a + b) * alpha * (1 - f_mu_train) + b) for a, b in zip(m, u)]
+            m_p = [((a + b) * alpha * mu_rate + a) for a, b in zip(m, u)]
+            u_p = [((a + b) * alpha * (1 - mu_rate) + b) for a, b in zip(m, u)]
+            w_p = [(a + b) for a, b in zip(m_p, u_p)]
             m = m_p
             u = u_p
+            w = w_p
 
-        w = [(a + b) for a, b in zip(m, u)]
         dat = xgb.DMatrix(x, label=[a / (a + b) for a, b in zip(m, u)], weight=w)
-        return m, u, w, f_mu_train, dat
+        return m, u, w, mu_rate, dat
 
     def draw_counts(self, n_in_fold, counts, rng):
         """
-        Adjusted from kmerPaPa source code: https://github.com/BesenbacherLab/kmerPaPa/tree/main
+        --------------- Adjusted from kmerPaPa github ---------------> https://github.com/BesenbacherLab/kmerPaPa/tree/main
+
         Sample from a hypergeometric distribution to split training data to CV folds
+            U: unmutated counts list
+            M: mutated counts list
         """
+
         remaining = np.cumsum(counts[::-1])[::-1]
         fold_counts = np.zeros(len(counts), dtype=np.uint64)
         for i in range(len(counts) - 1):
@@ -234,11 +269,11 @@ class Booster:
 
     def make_folds(self, M, U, n_folds, seed=0):
         """
-        Adjusted from kmerPaPa source code: https://github.com/BesenbacherLab/kmerPaPa/tree/main
-        Split training data to CV folds
+        --------------- Adjusted from kmerPaPa github ---------------> https://github.com/BesenbacherLab/kmerPaPa/tree/main
 
-        U: unmutated counts list
-        M: mutated counts list
+        Sample from a hypergeometric distribution to split training data to CV folds
+            U: unmutated counts list
+            M: mutated counts list
         """
         assert len(M) == len(U)
         m_u_counts = np.empty(2 * len(M), dtype=np.uint64)
@@ -262,19 +297,25 @@ class Booster:
         return samples
 
     def param_configs(self):
+        """
+        Splits a dictionary with lists as values to separate dictionaries with all combinations of lists' values
+            paramspace: CV grid
+        """
         for comb in product(*self.paramspace.values()):
             yield OrderedDict(
                 sorted(zip(self.paramspace.keys(), comb), key=lambda x: x[0])
             )
 
-    def cross_validation(self, m_train, u_train, x_train):
+    def cross_validation(self, x_train_in, m_train_in, u_train_in):
         xgb.set_config(verbosity=1)  # verbosity level
         num_round = 10000  # number of boosting rounds
         best_mean_nll = 1e60  # start value for nll
-        n_c = x_train.shape[0]  # number of input contexts
+        n_c = x_train_in.shape[0]  # number of input contexts
         train_res = pd.DataFrame({})  # results DF
 
         for config in self.param_configs():  # Find optimal hyperparams
+            alpha = float(config.pop("alpha"))
+
             if (
                 config["tree_method"] == "exact"
             ):  # grow policy not tuned for exact tree method
@@ -301,35 +342,47 @@ class Booster:
                 ):
                     continue
 
-            ll_CV = []
-            nk_r2_CV = []
-            best_it = []
+            ll_CV = []  # save validation set log-likelhood
+            nk_r2_CV = []  # save validation set nagelkerke r2
+            best_it = []  # save iteration where training was stopped (early stopping evaluated based on validation loglik)
+
             start_time = time.time()  # CV time start
             for n_CV_it_i in range(self.n_CV_it):
                 # create CV folds
                 CV_folds = self.make_folds(
-                    m_train, u_train, self.n_folds, seed=n_CV_it_i
+                    m_train_in, u_train_in, self.n_folds, seed=n_CV_it_i
                 )
 
                 for fold in range(self.n_folds):
                     # training folds
                     m_train_f = CV_folds[
                         0:n_c, [x for x in range(self.n_folds) if x != fold]
-                    ].sum(axis=1)
-                    w_train_f = CV_folds[
+                    ].sum(axis=1)  # sum mutated counts across training folds
+                    u_train_f = CV_folds[
                         n_c : (2 * n_c), [x for x in range(self.n_folds) if x != fold]
-                    ].sum(axis=1)
+                    ].sum(axis=1)  # sum unmutated counts across training folds
+                    w_train_f = [
+                        a + b for a, b in zip(m_train_f, u_train_f)
+                    ]  # calculate weight as m + u
+
                     m_train_f, u_train_f, w_train_f, f_mu_train, dtrain = (
                         self.prep_modeling_data(
-                            x_train, m_train_f, w_train_f, self.alpha, add_pc=True
+                            x_train_in, m_train_f, w_train_f, alpha, add_pc=True
                         )
                     )
 
                     # validation fold
-                    m_val_f = CV_folds[0:n_c, fold]
-                    w_val_f = CV_folds[n_c : (2 * n_c), fold]
+                    m_val_f = CV_folds[
+                        0:n_c, fold
+                    ]  # get validation fold mutated counts
+                    u_val_f = CV_folds[
+                        n_c : (2 * n_c), fold
+                    ]  # get validation fold unmutated counts
+                    w_val_f = [
+                        a + b for a, b in zip(m_val_f, u_val_f)
+                    ]  # calculate weight as m + u
                     m_val_f, u_val_f, w_val_f, f_mu_val, dval = self.prep_modeling_data(
-                        x_train, m_val_f, w_val_f, self.alpha, add_pc=False
+                        x_train_in, m_val_f, w_val_f, alpha, add_pc=False
                     )
 
                     # null model log_lik
@@ -341,7 +394,7 @@ class Booster:
                     print(f"Running CV iteration {n_CV_it_i} and fold {fold}")
                     full_config = (
                         self.fixed_param | config
-                    )  # merge base and tuned parameters
+                    )  # merge fixed and tuned parameters
 
                     # early stopping callback
                     es = xgb.callback.EarlyStopping(
@@ -380,6 +433,7 @@ class Booster:
             end_time = time.time()  # CV time end
 
             if not self.dist_CV:
+                # calculate means across folds
                 mean_ll = (sum(ll_CV) / len(ll_CV)).item()
                 mean_val_nk_r2 = (sum(nk_r2_CV) / len(nk_r2_CV)).item()
                 mean_best_it = round((sum(best_it) / len(best_it)))
@@ -403,9 +457,11 @@ class Booster:
                     l2_i = config["lambda"]
                     eta_i = config["eta"]
                     md_i = config["max_depth"]
+                    alpha_i = alpha
                     CV_res_df.to_csv(
                         os.path.join(
-                            self.outdir, f"CV_res_l2_{l2_i}_eta_{eta_i}_md_{md_i}.csv"
+                            self.outdir,
+                            f"CV_res_l2_{l2_i}_eta_{eta_i}_md_{md_i}_alpha_{alpha_i}.csv",
                         ),
                         header=True,
                         index=False,
@@ -413,16 +469,19 @@ class Booster:
 
                 if config["tree_method"] == "auto":
                     print(
-                        f"XGBoost with max_depth={config['max_depth']} eta={config['eta']} tree_method={config['tree_method']} grow_policy={config['grow_policy']} mean_val_LL={round(mean_ll, 5)} mean_val_nk_r2={round(mean_val_nk_r2, 5)} mean_best_iteration: {mean_best_it}"
+                        f"XGBoost with alpha={alpha} max_depth={config['max_depth']} eta={config['eta']} tree_method={config['tree_method']} grow_policy={config['grow_policy']} mean_val_LL={round(mean_ll, 5)} mean_val_nk_r2={round(mean_val_nk_r2, 5)} mean_best_iteration: {mean_best_it}"
                     )
                 else:
                     print(
-                        f"XGBoost with max_depth={config['max_depth']} eta={config['eta']} tree_method={config['tree_method']} mean_val_LL={round(mean_ll, 5)} mean_val_nk_r2={round(mean_val_nk_r2, 5)} mean_best_iteration: {mean_best_it}"
+                        f"XGBoost with alpha={alpha} max_depth={config['max_depth']} eta={config['eta']} tree_method={config['tree_method']} mean_val_LL={round(mean_ll, 5)} mean_val_nk_r2={round(mean_val_nk_r2, 5)} mean_best_iteration: {mean_best_it}"
                     )
 
                 config["mean_val_ll"] = mean_ll
                 config["mean_val_nk_r2"] = mean_val_nk_r2
+                config["best_iteration"] = max_best_it
                 config["CV_time_min"] = round((end_time - start_time) / 60, 2)
+                config["alpha"] = alpha
+
                 if train_res.shape[0] == 0:
                     train_res = pd.DataFrame([config])
                 else:
@@ -437,23 +496,26 @@ class Booster:
                     param_best["best_iteration"] = max_best_it
 
         if self.dist_CV:
+            # calculate means across folds
             mean_ll = (sum(ll_CV) / len(ll_CV)).item()
             mean_val_nk_r2 = (sum(nk_r2_CV) / len(nk_r2_CV)).item()
             mean_best_it = round((sum(best_it) / len(best_it)))
             max_best_it = max(best_it)
+
             config["mean_val_ll"] = mean_ll
             config["mean_val_nk_r2"] = mean_val_nk_r2
             config["best_iteration"] = max_best_it
             config["CV_time_min"] = round((end_time - start_time) / 60, 2)
-            config["alpha"] = self.alpha
+            config["alpha"] = alpha
+
             l2_i = config["lambda"]
             eta_i = config["eta"]
             md_i = config["max_depth"]
             dist_CV_res = pd.DataFrame(config, index=[0])
-            if self.alpha == 0:
+            if alpha == 0:
                 alpha_write = "0"
             else:
-                alpha_write = self.alpha
+                alpha_write = alpha
             dist_CV_res.to_csv(
                 os.path.join(
                     self.outdir,
