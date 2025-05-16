@@ -147,7 +147,7 @@ class Booster:
             )
 
             # run prediction
-            preds_train = bst.predict(dtrain)
+            preds_train = bst.predict(dtrain).astype(np.float64)
 
             # calculate log_loss
             ll_train = log_loss(preds_train, m_train, u_train)
@@ -420,7 +420,9 @@ class Booster:
                     best_it.append(bst.best_iteration)
 
                     # calculate log_loss
-                    ll = log_loss(bst.predict(dval), m_val_f, u_val_f)
+                    ll = log_loss(
+                        bst.predict(dval).astype(np.float64), m_val_f, u_val_f
+                    )
                     ll_CV.append(ll)
 
                     # calculate nagelkerke_r2

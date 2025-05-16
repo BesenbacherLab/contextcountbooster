@@ -50,8 +50,12 @@ def log_loss(p_preds, m, u):
     """
     ll = 0
     for idx, p in enumerate(p_preds):
-        ll += xlogy(m[idx], p) + xlogy(
-            u[idx], (1 - p)
+        if idx % 10000 == 0:
+            print(ll)
+        if idx == 1:
+            print(ll)
+        ll += xlogy(m[idx], p.item()) + xlogy(
+            u[idx], (1 - p.item())
         )  # p = predicted rate, m = mut count, u = unmut count
     return ll
 

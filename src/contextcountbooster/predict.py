@@ -22,15 +22,13 @@ class Predicter:
         u_test = [y - x for x, y in zip(m_test, w_test)]
 
         dtest = xgb.DMatrix(x_test, weight=w_test)
-        preds = self.bst.predict(
-            dtest
-        )  # , iteration_range=(0, self.bst.best_iteration + 1) -> not needed, uses best iteration automatically?
-
+        preds = self.bst.predict(dtest).astype(np.float64)
         ll_test = log_loss(preds, m_test, u_test)
 
         # calculate nagelkerke r2
         n_test = sum(w_test)
-        ll0_test = log_loss([self.mod0] * self.test_data.shape[0], m_test, u_test)
+        null_preds = np.array([self.mod0] * self.test_data.shape[0], dtype=np.float64)
+        ll0_test = log_loss(null_preds, m_test, u_test)
         nk_r2 = nagelkerke_r2(n_test, ll0_test, ll_test)
 
         print(f"Test data ll: {ll_test}")
