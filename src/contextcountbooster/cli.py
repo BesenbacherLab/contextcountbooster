@@ -159,7 +159,8 @@ def get_parser():
     train.add_argument(
         "--alpha",
         help="Pseudocount fraction (n) with respect to the total sample size (N), alpha=n/N",
-        default=0.01,
+        nargs="*",
+        default=[0.01],
     )
 
     train.add_argument(

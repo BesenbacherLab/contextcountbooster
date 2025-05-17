@@ -39,17 +39,30 @@ class Predicter:
         dtest = xgb.DMatrix(x_test, weight=w_test)
 
         if self.distribution == "Poisson":
-            preds = self.xgblss.predict(dtest, pred_type="parameters")["rate"].to_list()
+            preds = (
+                self.xgblss.predict(dtest, pred_type="parameters")
+                .astype(np.float64)["rate"]
+                .to_list()
+            )
         elif self.distribution == "ZIPoisson":
-            r_val = self.xgblss.predict(dtest, pred_type="parameters")["rate"].to_list()
-            p_val = self.xgblss.predict(dtest, pred_type="parameters")["gate"].to_list()
+            r_val = (
+                self.xgblss.predict(dtest, pred_type="parameters")
+                .astype(np.float64)["rate"]
+                .to_list()
+            )
+            p_val = (
+                self.xgblss.predict(dtest, pred_type="parameters")
+                .astype(np.float64)["gate"]
+                .to_list()
+            )
             preds = [(1 - p) * r for r, p in zip(r_val, p_val)]
 
         ll_test = log_loss(preds, m_test, u_test)
 
         # calculate nagelkerke r2
         n_test = sum(w_test)
-        ll0_test = log_loss([self.mod0] * self.test_data.shape[0], m_test, u_test)
+        null_preds = np.array([self.mod0] * self.test_data.shape[0], dtype=np.float64)
+        ll0_test = log_loss(null_preds, m_test, u_test)
         nk_r2 = nagelkerke_r2(n_test, ll0_test, ll_test)
 
         print(f"Test data ll: {ll_test}")
