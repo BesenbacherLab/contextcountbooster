@@ -78,11 +78,11 @@ def get_parser():
         "--dist_CV",
         help="Hyperparameter tuning is distributred from the pipeline as independent jobs. '\
                 Fixed hyperparameter values are input and the CV result will be saved. '\
-                Following this, CV results can be combined, optimal parameters chosen and full model trained with --aggregate_CV_and_train flag.",
+                Following this, CV results can be combined, optimal parameters chosen and full model trained with --aggregate_and_train_only flag.",
         action="store_true",
     )
     train.add_argument(
-        "--aggregate_CV_and_train",
+        "--aggregate_and_train_only",
         help="Combines CV results that have been run as independent jobs with --dist_CV flag, chooses optimal parameters and trains the full model.",
         action="store_true",
     )
@@ -222,7 +222,7 @@ def main(args=None):
             opts.train_data,
             opts.output_dir,
             opts.dist_CV,
-            opts.aggregate_CV_and_train,
+            opts.aggregate_and_train_only,  # aggregate_CV_and_train
             opts.encoding,
             opts.CV_res_range,
             opts.n_CV_it,

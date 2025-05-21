@@ -28,7 +28,7 @@ class Predicter:
             self.xgblss = XGBoostLSS(
                 ZIPoisson(stabilization="None", response_fn="softplus", loss_fn="nll")
             )
-        self.xgblss.load_model(model)  # load model data (pkl)
+        self.xgblss = self.xgblss.load_model(model)  # load model data (pkl)
 
     def predict(self):
         x_test = np.array(self.test_data.iloc[:, 4:])  # encoded features
@@ -44,6 +44,7 @@ class Predicter:
                 .astype(np.float64)["rate"]
                 .to_list()
             )
+            preds = np.array(preds, dtype=np.float64)
         elif self.distribution == "ZIPoisson":
             r_val = (
                 self.xgblss.predict(dtest, pred_type="parameters")
@@ -55,7 +56,9 @@ class Predicter:
                 .astype(np.float64)["gate"]
                 .to_list()
             )
-            preds = [(1 - p) * r for r, p in zip(r_val, p_val)]
+            preds = np.array(
+                [(1 - p) * r for r, p in zip(r_val, p_val)], dtype=np.float64
+            )
 
         ll_test = log_loss(preds, m_test, u_test)
 

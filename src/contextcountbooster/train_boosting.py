@@ -21,7 +21,7 @@ class Booster:
         train_data,
         outdir,
         dist_CV,
-        aggregate_CV_and_train,
+        aggregate_and_train_only,
         encoding,
         CV_res_range,
         n_CV_it,
@@ -41,7 +41,7 @@ class Booster:
         self.train_data = pd.read_csv(self.train_file_name, sep="\t")
         self.outdir = outdir
         self.dist_CV = dist_CV
-        self.aggregate_CV_and_train = aggregate_CV_and_train
+        self.aggregate_CV_and_train = aggregate_and_train_only
         self.CV_res_range = CV_res_range
         self.n_CV_it = n_CV_it
         self.encoding = encoding
@@ -170,18 +170,21 @@ class Booster:
                     .astype(np.float64)["rate"]
                     .to_list()
                 )
+                preds_train = np.array(preds_train, dtype=np.float64)
             elif self.distribution == "ZIPoisson":
-                r_val = (
+                r_train = (
                     xgblss.predict(dtrain, pred_type="parameters")
                     .astype(np.float64)["rate"]
                     .to_list()
                 )
-                p_val = (
+                p_train = (
                     xgblss.predict(dtrain, pred_type="parameters")
                     .astype(np.float64)["gate"]
                     .to_list()
                 )
-                preds_train = [(1 - p) * r for r, p in zip(r_val, p_val)]
+                preds_train = np.array(
+                    [(1 - p) * r for r, p in zip(r_train, p_train)], dtype=np.float64
+                )
 
             # calculate log_loss
             ll_train = log_loss(preds_train, m_train, u_train)
@@ -458,6 +461,7 @@ class Booster:
                             .astype(np.float64)["rate"]
                             .to_list()
                         )
+                        pred_val = np.array(pred_val, dtype=np.float64)
                     elif self.distribution == "ZIPoisson":
                         r_val = (
                             xgblss.predict(dval, pred_type="parameters")
@@ -469,7 +473,10 @@ class Booster:
                             .astype(np.float64)["gate"]
                             .to_list()
                         )
-                        pred_val = [(1 - p) * r for r, p in zip(r_val, p_val)]
+                        pred_val = np.array(
+                            [(1 - p) * r for r, p in zip(r_val, p_val)],
+                            dtype=np.float64,
+                        )
 
                     ll = log_loss(pred_val, m_val_f, u_val_f)
                     ll_CV.append(ll)
