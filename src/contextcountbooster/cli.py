@@ -157,6 +157,12 @@ def get_parser():
         nargs="*",
         default=[0.01],
     )
+    train.add_argument(
+        "--distribution",
+        help="Distribution to use for xgboostLSS.",
+        default="Poisson",
+        choices=["Poisson", "ZIPoisson"],
+    )
 
     predict = subparsers.add_parser(
         name="predict",
@@ -174,6 +180,12 @@ def get_parser():
         "--output_dir",
         help="Directory to write the model and training statistics in. Current directory by default",
         default="./",
+    )
+    predict.add_argument(
+        "--distribution",
+        help="Distribution to use for xgboostLSS.",
+        default="Poisson",
+        choices=["Poisson", "ZIPoisson"],
     )
 
     return parser
@@ -218,6 +230,7 @@ def main(args=None):
             opts.tree_method,
             opts.grow_policy,
             opts.alpha,
+            opts.distribution,
         )
         model = booster.train_booster()
         if not opts.dist_CV:
@@ -226,7 +239,11 @@ def main(args=None):
 
     elif opts.command == "predict":
         predicter = Predicter(
-            opts.test_data, opts.model, opts.null_model, opts.output_dir
+            opts.test_data,
+            opts.model,
+            opts.null_model,
+            opts.output_dir,
+            opts.distribution,
         )
         predicter.predict()
 

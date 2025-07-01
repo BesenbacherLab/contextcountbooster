@@ -7,27 +7,30 @@ from contextcountbooster.utils import nagelkerke_r2
 
 
 class Predicter:
-    def __init__(self, test_data, model, null_model, outdir):
+    def __init__(self, test_data, model, null_model, outdir, distribution):
         self.test_data = pd.read_csv(test_data, sep="\t")
         self.bst = xgb.Booster({"nthread": 4})  # init model
         self.bst.load_model(model)  # load model data (json)
         self.mod0 = pd.read_csv(null_model)
         self.mod0 = self.mod0["mu_freq"].item()
         self.outdir = outdir
+        self.distribution = distribution
 
     def predict(self):
         x_test = np.array(self.test_data.iloc[:, 4:])  # encoded features
-        m_test = self.test_data["count"].to_list()
-        w_test = self.test_data["weight"].to_list()
-        u_test = [y - x for x, y in zip(m_test, w_test)]
+        m_test = self.test_data["count"]
+        w_test = self.test_data["weight"]
+        u_test = np.subtract(w_test, m_test)
 
-        dtest = xgb.DMatrix(x_test, weight=w_test)
+        dtest = xgb.DMatrix(x_test, weight=w_test.astype(np.float64))
         preds = self.bst.predict(dtest).astype(np.float64)
         ll_test = log_loss(preds, m_test, u_test)
 
         # calculate nagelkerke r2
         n_test = sum(w_test)
-        null_preds = np.array([self.mod0] * self.test_data.shape[0], dtype=np.float64)
+        null_preds = np.array(
+            np.repeat(self.mod0, self.test_data.shape[0]), dtype=np.float64
+        )
         ll0_test = log_loss(null_preds, m_test, u_test)
         nk_r2 = nagelkerke_r2(n_test, ll0_test, ll_test)
 

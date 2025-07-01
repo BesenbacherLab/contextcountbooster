@@ -30,6 +30,7 @@ class Booster:
         tree_method,
         grow_policy,
         alpha,
+        distribution,
     ):
         self.train_file_name = train_data
         self.train_data = pd.read_csv(self.train_file_name, sep="\t")
@@ -50,6 +51,7 @@ class Booster:
         self.tree_method = tree_method
         self.grow_policy = grow_policy
         self.alpha = alpha
+        self.distribution = distribution
 
         if max_depth == "k_based":
             self.s_md = int(self.k) - 1
@@ -77,138 +79,6 @@ class Booster:
             "eval_metric": "poisson-nloglik",
         }
 
-    def train_booster(self):
-        # training features
-        x_train = np.array(self.train_data.iloc[:, 4:])  # encoded features
-        m_train = self.train_data["count"].to_list()  # kmer weights w = m + u
-        w_train = self.train_data["weight"].to_list()  # kmer counts (m)
-        u_train = [b - a for a, b in zip(m_train, w_train)]
-
-        # base parameters (not trained for optimal values)
-        if self.dist_CV:
-            CV_dist_res = self.cross_validation(x_train, m_train, u_train)
-            return CV_dist_res
-        else:
-            if self.aggregate_and_train_only:  # CV run in a distributed manner from workflow, combine CV results and choose optimal params
-                # read in dist CV results
-                CV_folder = (
-                    "/" + "/".join(self.outdir.strip("/").split("/")[:-1]) + "/CV/"
-                )
-                CV_files = [
-                    f
-                    for f in os.listdir(CV_folder)
-                    if os.path.isfile(os.path.join(CV_folder, f))
-                ]
-                best_mean_nll = 1e60
-                for i, file in enumerate(CV_files):
-                    train_res_i = pd.read_csv(CV_folder + file, sep=",")
-
-                    mean_ll = train_res_i.loc[0, "mean_val_ll"].item()
-                    if -mean_ll < best_mean_nll:
-                        best_mean_nll = -mean_ll
-                        param_best = train_res_i
-
-                    if i == 0:
-                        train_res = train_res_i
-                    else:
-                        train_res = pd.concat(
-                            [train_res, train_res_i], ignore_index=True
-                        )
-
-                opt_param = param_best.to_dict("records")[0]
-                print(opt_param)
-
-            else:
-                opt_param, train_res = self.cross_validation(x_train, m_train, u_train)
-
-            # prepare training data target and weights
-            alpha = float(opt_param.pop("alpha"))
-            m_train, u_train, w_train, f_mu_train, dtrain = self.prep_modeling_data(
-                x_train, m_train, w_train, alpha, add_pc=True
-            )
-
-            # remove optimal parameters CV performance measures
-            mean_val_ll = opt_param.pop("mean_val_ll")
-            mean_val_nk_r2 = opt_param.pop("mean_val_nk_r2")
-            max_best_it = opt_param.pop("best_iteration")
-            opt_param.pop("CV_time_min")
-
-            # create model full configuration
-            full_config = self.fixed_param | opt_param
-
-            start_time = time.time()  # training time start
-            bst = xgb.train(full_config, dtrain, num_boost_round=max_best_it)
-            end_time = time.time()  # training time end
-
-            # null model log_lik
-            n_train = sum(w_train)
-            ll0_train = log_loss(
-                [f_mu_train] * self.train_data.shape[0], m_train, u_train
-            )
-
-            # run prediction
-            preds_train = bst.predict(dtrain).astype(np.float64)
-
-            # calculate log_loss
-            ll_train = log_loss(preds_train, m_train, u_train)
-
-            # calculate nagelkerke_r2
-            nk_r2_train = nagelkerke_r2(n_train, ll0_train, ll_train)
-
-            # save model
-            os.makedirs(self.outdir, exist_ok=True)
-            bst.save_model(os.path.join(self.outdir, "bst_best.json"))
-            # dump model
-            bst.dump_model(os.path.join(self.outdir, "bst_best.raw.txt"))
-
-            opt_param["alpha"] = alpha
-            opt_param["mean_val_ll"] = mean_val_ll
-            opt_param["mean_val_nk_r2"] = mean_val_nk_r2
-            opt_param["max_best_it"] = max_best_it
-            opt_param["train_ll0"] = ll0_train
-            opt_param["train_ll"] = ll_train
-            opt_param["train_nk_r2"] = nk_r2_train
-            opt_param["train_time_min"] = round((end_time - start_time) / 60, 2)
-
-            # write best model config and loss
-            pd.DataFrame.from_dict(data=opt_param, orient="index").to_csv(
-                os.path.join(self.outdir, "bst_best_param.csv"), header=False
-            )
-
-            # write training results
-            train_res.to_csv(
-                os.path.join(self.outdir, "training_res.csv"), header=True, index=False
-            )
-
-            # write mean freq (null model)
-            pd.DataFrame.from_dict(
-                data={"mu_freq": [f_mu_train]}, orient="columns"
-            ).to_csv(os.path.join(self.outdir, "mu_freq.csv"), index=False)
-
-            return bst
-
-    def nonzero_weights_data(self, x, m, w):
-        """
-        Check and notify of observations with weight equal to zero. Then filter data to remove all observations where weight (w) is equal to zero
-            x: features (one-hot encoded k-mers)
-            m: mutated counts
-            w: weights (mutated + unmutated counts)
-        """
-        a0_idx = [
-            i for i, x in enumerate(w) if x > 0
-        ]  # get indices of non-zero weights
-
-        if len(a0_idx) != len(w):
-            print(
-                f"\n--->PROBLEM: There are observations with zero weights ({len(m) - len(a0_idx)} out of {len(m)} total observations)\n"
-            )
-            x_nz = x[a0_idx, :]  # choose features with non-zero weights
-            m_nz = [m[i] for i in a0_idx]  # choose counts with non-zero weights
-            w_nz = [w[i] for i in a0_idx]  # choose weights with non-zero weights
-            return x_nz, m_nz, w_nz
-        else:
-            return x, m, w
-
     def prep_modeling_data(self, x, m, w, alpha, add_pc=False):
         """
         1) Checks for observations where weight is zero or mutated count is larger than the weight.
@@ -221,30 +91,40 @@ class Booster:
             add_pc: pseudocount addition flag
         Returns: mutated, unmutated counts, weights, mean rate, xgb.Dmatrix
         """
+
         # check for (and remove) observations with zero weights
-        x, m, w = self.nonzero_weights_data(x, m, w)
+        mask = w > 0  # get indices of non-zero weights
+        if sum(mask) != len(w):
+            print(
+                f"\n--->PROBLEM: There are observations with zero weights ({len(w) - sum(mask)} out of {len(w)} total observations)\n"
+            )
+            x = x[mask, :]  # choose features with non-zero weights
+            m = m[mask]  # choose counts with non-zero weights
+            w = w[mask]  # choose weights with non-zero weights
 
         # check for observations where the mutated count is larger than the weight, if there are any, exit
-        a = [i for i, (a, b) in enumerate(zip(m, w)) if a > b]
-        if len(a) > 0:
-            print(f"\n---> PROBLEM: m > w, at indices: {a}\n")
+        mask = m > w
+
+        if sum(mask) > 0:
+            print(f"\n---> PROBLEM: m > w, at indices: {mask}\n")
 
         # calculate unmutated counts based on weights and mutated counts as: weight - mutation cound
-        u = [b - a for a, b in zip(m, w)]
+        u = np.subtract(w, m)
 
         # mean rate
         mu_rate = np.sum(m) / np.sum(w)
 
         # add pseducounts based on alpha
+        w_ps_m = w * alpha * mu_rate
+        w_ps_u = w * alpha * (1 - mu_rate)
         if add_pc:
-            m_p = [((a + b) * alpha * mu_rate + a) for a, b in zip(m, u)]
-            u_p = [((a + b) * alpha * (1 - mu_rate) + b) for a, b in zip(m, u)]
-            w_p = [(a + b) for a, b in zip(m_p, u_p)]
-            m = m_p
-            u = u_p
-            w = w_p
+            m = np.add(m, w_ps_m)
+            u = np.add(u, w_ps_u)
+            w = np.add(m, u)
 
-        dat = xgb.DMatrix(x, label=[a / (a + b) for a, b in zip(m, u)], weight=w)
+        dat = xgb.DMatrix(
+            x, label=np.divide(m, w).astype(np.float64), weight=w.astype(np.float64)
+        )
         return m, u, w, mu_rate, dat
 
     def draw_counts(self, n_in_fold, counts, rng):
@@ -306,6 +186,116 @@ class Booster:
                 sorted(zip(self.paramspace.keys(), comb), key=lambda x: x[0])
             )
 
+    def train_booster(self):
+        # training features
+        x_train = np.array(self.train_data.iloc[:, 4:])  # encoded features
+        m_train = self.train_data["count"]  # kmer weights w = m + u
+        w_train = self.train_data["weight"]  # kmer counts (m)
+        u_train = np.subtract(w_train, m_train)
+
+        # base parameters (not trained for optimal values)
+        if self.dist_CV:
+            CV_dist_res = self.cross_validation(x_train, m_train, u_train)
+            return CV_dist_res
+        else:
+            if self.aggregate_and_train_only:  # CV run in a distributed manner from workflow, combine CV results and choose optimal params
+                # read in dist CV results
+                CV_folder = (
+                    "/" + "/".join(self.outdir.strip("/").split("/")[:-1]) + "/CV/"
+                )
+                CV_files = [
+                    f
+                    for f in os.listdir(CV_folder)
+                    if os.path.isfile(os.path.join(CV_folder, f))
+                ]
+                best_mean_nll = 1e60
+                for i, file in enumerate(CV_files):
+                    train_res_i = pd.read_csv(CV_folder + file, sep=",")
+
+                    mean_ll = train_res_i.loc[0, "mean_val_ll"].item()
+                    if -mean_ll < best_mean_nll:
+                        best_mean_nll = -mean_ll
+                        param_best = train_res_i
+
+                    if i == 0:
+                        train_res = train_res_i
+                    else:
+                        train_res = pd.concat(
+                            [train_res, train_res_i], ignore_index=True
+                        )
+
+                opt_param = param_best.to_dict("records")[0]
+                print(opt_param)
+
+            else:
+                opt_param, train_res = self.cross_validation(x_train, m_train, u_train)
+
+            # prepare training data target and weights
+            alpha = float(opt_param.pop("alpha"))
+            m_train, u_train, w_train, f_mu_train, dtrain = self.prep_modeling_data(
+                x_train, m_train, w_train, alpha, add_pc=True
+            )
+
+            # remove optimal parameters CV performance measures
+            mean_val_ll = opt_param.pop("mean_val_ll")
+            mean_val_nk_r2 = opt_param.pop("mean_val_nk_r2")
+            max_best_it = opt_param.pop("best_iteration")
+            opt_param.pop("CV_time_min")
+
+            # create model full configuration
+            full_config = self.fixed_param | opt_param
+
+            start_time = time.time()  # training time start
+            bst = xgb.train(full_config, dtrain, num_boost_round=max_best_it)
+            end_time = time.time()  # training time end
+
+            # null model log_lik
+            n_train = sum(w_train)
+            ll0_train = log_loss(
+                np.repeat(f_mu_train, self.train_data.shape[0]), m_train, u_train
+            )
+
+            # run prediction
+            preds_train = bst.predict(dtrain).astype(np.float64)
+
+            # calculate log_loss
+            ll_train = log_loss(preds_train, m_train, u_train)
+
+            # calculate nagelkerke_r2
+            nk_r2_train = nagelkerke_r2(n_train, ll0_train, ll_train)
+
+            # save model
+            os.makedirs(self.outdir, exist_ok=True)
+            bst.save_model(os.path.join(self.outdir, "bst_best.json"))
+            # dump model
+            bst.dump_model(os.path.join(self.outdir, "bst_best.raw.txt"))
+
+            opt_param["alpha"] = alpha
+            opt_param["mean_val_ll"] = mean_val_ll
+            opt_param["mean_val_nk_r2"] = mean_val_nk_r2
+            opt_param["max_best_it"] = max_best_it
+            opt_param["train_ll0"] = ll0_train
+            opt_param["train_ll"] = ll_train
+            opt_param["train_nk_r2"] = nk_r2_train
+            opt_param["train_time_min"] = round((end_time - start_time) / 60, 2)
+
+            # write best model config and loss
+            pd.DataFrame.from_dict(data=opt_param, orient="index").to_csv(
+                os.path.join(self.outdir, "bst_best_param.csv"), header=False
+            )
+
+            # write training results
+            train_res.to_csv(
+                os.path.join(self.outdir, "training_res.csv"), header=True, index=False
+            )
+
+            # write mean freq (null model)
+            pd.DataFrame.from_dict(
+                data={"mu_freq": [f_mu_train]}, orient="columns"
+            ).to_csv(os.path.join(self.outdir, "mu_freq.csv"), index=False)
+
+            return bst
+
     def cross_validation(self, x_train_in, m_train_in, u_train_in):
         xgb.set_config(verbosity=1)  # verbosity level
         num_round = 10000  # number of boosting rounds
@@ -361,9 +351,9 @@ class Booster:
                     u_train_f = CV_folds[
                         n_c : (2 * n_c), [x for x in range(self.n_folds) if x != fold]
                     ].sum(axis=1)  # sum unmutated counts across training folds
-                    w_train_f = [
-                        a + b for a, b in zip(m_train_f, u_train_f)
-                    ]  # calculate weight as m + u
+                    w_train_f = np.sum(
+                        [m_train_f, u_train_f], axis=0
+                    )  # calculate weight as m + u
 
                     m_train_f, u_train_f, w_train_f, f_mu_train, dtrain = (
                         self.prep_modeling_data(
@@ -378,15 +368,15 @@ class Booster:
                     u_val_f = CV_folds[
                         n_c : (2 * n_c), fold
                     ]  # get validation fold unmutated counts
-                    w_val_f = [
-                        a + b for a, b in zip(m_val_f, u_val_f)
-                    ]  # calculate weight as m + u
+                    w_val_f = np.sum([m_val_f, u_val_f], axis=0)
                     m_val_f, u_val_f, w_val_f, f_mu_val, dval = self.prep_modeling_data(
                         x_train_in, m_val_f, w_val_f, alpha, add_pc=False
                     )
 
                     # null model log_lik
-                    ll0_val = log_loss([f_mu_train] * len(m_val_f), m_val_f, u_val_f)
+                    ll0_val = log_loss(
+                        np.repeat(f_mu_train, len(m_val_f)), m_val_f, u_val_f
+                    )
 
                     # specify validations set to watch performance
                     watchlist = [(dtrain, "train"), (dval, "eval")]
@@ -399,7 +389,7 @@ class Booster:
                     # early stopping callback
                     es = xgb.callback.EarlyStopping(
                         rounds=100,  # val error needs to decrease at least every x rounds to continue training
-                        min_delta=1e-6,  # minimum change in metric
+                        min_delta=1e-15,  # minimum change in metric
                         save_best=True,
                         maximize=False,
                         data_name="eval",
