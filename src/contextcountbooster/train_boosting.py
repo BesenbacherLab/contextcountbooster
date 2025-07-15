@@ -31,6 +31,7 @@ class Booster:
         grow_policy,
         alpha,
         distribution,
+        min_es_delta,
     ):
         self.train_file_name = train_data
         self.train_data = pd.read_csv(self.train_file_name, sep="\t")
@@ -52,6 +53,7 @@ class Booster:
         self.grow_policy = grow_policy
         self.alpha = alpha
         self.distribution = distribution
+        self.min_es_delta = min_es_delta
 
         if max_depth == "k_based":
             self.s_md = int(self.k) - 1
@@ -99,8 +101,8 @@ class Booster:
                 f"\n--->PROBLEM: There are observations with zero weights ({len(w) - sum(mask)} out of {len(w)} total observations)\n"
             )
             x = x[mask, :]  # choose features with non-zero weights
-            m = m[mask]  # choose counts with non-zero weights
-            w = w[mask]  # choose weights with non-zero weights
+            m = m[mask].reset_index(drop=True)  # choose counts with non-zero weights
+            w = w[mask].reset_index(drop=True)  # choose weights with non-zero weights
 
         # check for observations where the mutated count is larger than the weight, if there are any, exit
         mask = m > w
@@ -389,7 +391,7 @@ class Booster:
                     # early stopping callback
                     es = xgb.callback.EarlyStopping(
                         rounds=100,  # val error needs to decrease at least every x rounds to continue training
-                        min_delta=1e-15,  # minimum change in metric
+                        min_delta=self.min_es_delta,  # minimum change in metric
                         save_best=True,
                         maximize=False,
                         data_name="eval",
@@ -520,8 +522,14 @@ class Booster:
             return param_best, train_res
 
     def get_base_encoded_rep(self):
+        up_to = 1
+        if int(self.k) % 2 == 0:
+            up_to = 0
+
         base_rep = [
-            str(x) for x in range(-(self.k // 2), 1) for _ in range(int(self.encoding))
+            str(x)
+            for x in range(-(self.k // 2), up_to)
+            for _ in range(int(self.encoding))
         ]
         base_rep.extend(
             [
@@ -534,7 +542,7 @@ class Booster:
         f_rep = ["f" + str(x) for x in range(0, (self.k * int(self.encoding)))]
         f_name = [
             str(x) + "_b" + str(y)
-            for x in range(-(self.k // 2), 1)
+            for x in range(-(self.k // 2), up_to)
             for y in range(1, int(self.encoding) + 1)
         ]
         f_name.extend(
@@ -544,6 +552,10 @@ class Booster:
                 for y in range(1, int(self.encoding) + 1)
             ]
         )
+        print("base_rep, length", len(base_rep))
+        print("f_rep, length", len(f_rep))
+        print("f_name, length", len(f_name))
+
         base_rep_df = pd.DataFrame(
             {"encoded": f_rep, "base_rep": base_rep, "feature_name": f_name}
         )

@@ -163,6 +163,12 @@ def get_parser():
         default="Poisson",
         choices=["Poisson", "ZIPoisson"],
     )
+    train.add_argument(
+        "--early_stopping_min_delta",
+        help="Minimum allowed change in metric (Poisson NLL) for early stopping",
+        default=1e-15,
+        type=float,
+    )
 
     predict = subparsers.add_parser(
         name="predict",
@@ -231,6 +237,7 @@ def main(args=None):
             opts.grow_policy,
             opts.alpha,
             opts.distribution,
+            opts.early_stopping_min_delta,
         )
         model = booster.train_booster()
         if not opts.dist_CV:
