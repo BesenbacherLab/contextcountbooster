@@ -101,8 +101,8 @@ class Booster:
                 f"\n--->PROBLEM: There are observations with zero weights ({len(w) - sum(mask)} out of {len(w)} total observations)\n"
             )
             x = x[mask, :]  # choose features with non-zero weights
-            m = m[mask].reset_index(drop=True)  # choose counts with non-zero weights
-            w = w[mask].reset_index(drop=True)  # choose weights with non-zero weights
+            m = m[mask]  # choose counts with non-zero weights
+            w = w[mask]  # choose weights with non-zero weights
 
         # check for observations where the mutated count is larger than the weight, if there are any, exit
         mask = m > w
@@ -127,7 +127,7 @@ class Booster:
         dat = xgb.DMatrix(
             x, label=np.divide(m, w).astype(np.float64), weight=w.astype(np.float64)
         )
-        return m, u, w, mu_rate, dat
+        return x, m, u, w, mu_rate, dat
 
     def draw_counts(self, n_in_fold, counts, rng):
         """
@@ -191,8 +191,13 @@ class Booster:
     def train_booster(self):
         # training features
         x_train = np.array(self.train_data.iloc[:, 4:])  # encoded features
-        m_train = self.train_data["count"]  # kmer weights w = m + u
-        w_train = self.train_data["weight"]  # kmer counts (m)
+        m_train = np.array(self.train_data["count"])  # kmer weights w = m + u
+        w_train = np.array(self.train_data["weight"])  # kmer counts (m)
+        mask = w_train > 0  # get indices of non-zero weights
+        if sum(mask) != len(w_train):
+            x_train = x_train[mask, :]  # choose features with non-zero weights
+            m_train = m_train[mask]  # choose counts with non-zero weights
+            w_train = w_train[mask]  # choose weights with non-zero weights
         u_train = np.subtract(w_train, m_train)
 
         # base parameters (not trained for optimal values)
@@ -234,8 +239,8 @@ class Booster:
 
             # prepare training data target and weights
             alpha = float(opt_param.pop("alpha"))
-            m_train, u_train, w_train, f_mu_train, dtrain = self.prep_modeling_data(
-                x_train, m_train, w_train, alpha, add_pc=True
+            x_train, m_train, u_train, w_train, f_mu_train, dtrain = (
+                self.prep_modeling_data(x_train, m_train, w_train, alpha, add_pc=True)
             )
 
             # remove optimal parameters CV performance measures
@@ -253,9 +258,7 @@ class Booster:
 
             # null model log_lik
             n_train = sum(w_train)
-            ll0_train = log_loss(
-                np.repeat(f_mu_train, self.train_data.shape[0]), m_train, u_train
-            )
+            ll0_train = log_loss(np.repeat(f_mu_train, len(m_train)), m_train, u_train)
 
             # run prediction
             preds_train = bst.predict(dtrain).astype(np.float64)
@@ -357,7 +360,7 @@ class Booster:
                         [m_train_f, u_train_f], axis=0
                     )  # calculate weight as m + u
 
-                    m_train_f, u_train_f, w_train_f, f_mu_train, dtrain = (
+                    x_train, m_train_f, u_train_f, w_train_f, f_mu_train, dtrain = (
                         self.prep_modeling_data(
                             x_train_in, m_train_f, w_train_f, alpha, add_pc=True
                         )
@@ -371,8 +374,10 @@ class Booster:
                         n_c : (2 * n_c), fold
                     ]  # get validation fold unmutated counts
                     w_val_f = np.sum([m_val_f, u_val_f], axis=0)
-                    m_val_f, u_val_f, w_val_f, f_mu_val, dval = self.prep_modeling_data(
-                        x_train_in, m_val_f, w_val_f, alpha, add_pc=False
+                    x_val, m_val_f, u_val_f, w_val_f, f_mu_val, dval = (
+                        self.prep_modeling_data(
+                            x_train_in, m_val_f, w_val_f, alpha, add_pc=False
+                        )
                     )
 
                     # null model log_lik
